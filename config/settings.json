@@ -1,0 +1,30 @@
+{
+    "SPIKE_SORTER": "kilosort4",
+    "IDENTIFIER": "",
+    "DATA_FOLDER": "C:\\path\\to\\data",
+    "SINGLE_SHANK": "car_local",
+    "MULTI_SHANK": "car_local",
+    "LOCAL_RADIUS": [
+        40,
+        240
+    ],
+    "PEAK_THRESHOLD": 0.0025,
+    "USE_NIDAQ": true,
+    "USE_DOCKER": false,
+    "COMPRESS_RAW_DATA": true,
+    "COMPRESSION": "mtscomp",
+    "NWB_EXPORT": false,
+    "N_CORES": -1,
+    "FORCE_NIDAQ": false,
+    "FORCE_SORT": false,
+    "FORCE_QC": false,
+    "FORCE_CURATION": false,
+    "VNS_BLANK": [
+        -0.5,
+        2.0
+    ],
+    "TAP_BLANK": [
+        -0.5,
+        5.0
+    ]
+}

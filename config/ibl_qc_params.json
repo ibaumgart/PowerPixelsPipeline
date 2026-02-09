@@ -1,0 +1,11 @@
+{
+    "acceptable_contamination": 10,
+    "RPmax_confidence": 90,
+    "noise_cutoff": {
+        "quantile_length": 0.25,
+        "n_bins": 100,
+        "nc_threshold": 5,
+        "percent_threshold": 0.1
+    },
+    "med_amp_thresh_uv": 50
+}

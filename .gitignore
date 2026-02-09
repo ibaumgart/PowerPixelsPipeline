@@ -1,6 +1,4 @@
 
-config/
-
 __pycache__/
 
 .ipynb_checkpoints/
@@ -8,3 +6,7 @@ __pycache__/
 src/powerpixels.egg-info/
 
 iblapps
+
+.vscode
+
+SGLXMetaToCoords

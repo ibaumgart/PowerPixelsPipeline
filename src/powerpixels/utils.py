@@ -7,11 +7,54 @@ By Guido Meijer
 """
 
 import numpy as np
-import pandas as pd
 import json
 from pathlib import Path
+from scipy.signal import medfilt
 from spikeinterface import load_sorting_analyzer
 from spikeinterface.widgets import plot_sorting_summary
+
+
+def load_json(json_path) -> dict:
+    """
+    Read JSON file.
+
+    :param json_path: JSON file path
+    :return: JSON dictionary
+    :rtype: dict[Any, Any]
+    """
+    with open(json_path) as f:
+        d = json.load(f)
+    return d
+
+
+def dump_json(obj, json_path):
+    """
+    Write to JSON file.
+
+    :param obj: JSON serializable object
+    :param json_path: JSON file path
+    """
+    with open(json_path, 'w') as f:
+        json.dump(obj, f, indent=1)
+
+
+def threshold_vns_current(current_trace, threshold_percentile=50, floor_percentile=10):
+    """
+    Thresholds VNS current trace
+    :param _slice: samples slice
+    :param threshold_percentile: percentile threshold for front detection, defaults to 0.5 * max(current_trace)
+    :param floor_percentile: 10% removes the percentile value of the analog trace before
+        thresholding. This is to avoid DC offset drift
+    :return: int8 array
+    """
+    if floor_percentile:
+        current_trace -= np.percentile(current_trace, 10, axis=0)
+    smooth_abs = medfilt(np.abs(current_trace), kernel_size=5)
+    threshold = np.percentile(smooth_abs, threshold_percentile, axis=0)
+    smooth_abs[np.where(smooth_abs < threshold)] = 0
+    smooth_abs[np.where(smooth_abs >= threshold)] = 1
+    return np.int8(smooth_abs)
+
 
 def manual_curation(results_path):
     """
@@ -27,21 +70,21 @@ def manual_curation(results_path):
     None.
 
     """
-    
+
     # Transfrom path into Pathlib if necessary
-    if type(results_path) == str:
+    if isinstance(results_path, str):
         results_path = Path(results_path)
-    
+
     # Load in sorting analyzer from disk
     sorting_analyzer = load_sorting_analyzer(results_path / 'sorting')
-    
+
     # Launch manual curation GUI       
     unit_properties = ['Bombcell', 'UnitRefine', 'IBL', 'Kilosort', 'firing_rate', 'rp_violations',
                        'snr', 'amplitude_median', 'presence_ratio']
     _ = plot_sorting_summary(sorting_analyzer=sorting_analyzer, curation=True,
                              displayed_unit_properties=unit_properties,
                              backend='spikeinterface_gui')
-    
+
     # Extract manual curation labels and save in results folder
     if (results_path / 'sorting' / 'spikeinterface_gui' / 'curation_data.json').is_file():
         with open(results_path / 'sorting' / 'spikeinterface_gui' / 'curation_data.json') as f:
@@ -53,9 +96,7 @@ def manual_curation(results_path):
         for this_unit in label_dict['manual_labels']:
             manual_labels[sorting_analyzer.unit_ids == this_unit['unit_id']] = this_unit['quality']
         np.save(results_path / 'clusters.manualLabels.npy', manual_labels)
-    
-    return       
-            
+
 
 def load_neural_data(session_path, probe, histology=False, keep_units='all'):
     """
@@ -85,27 +126,27 @@ def load_neural_data(session_path, probe, histology=False, keep_units='all'):
     clusters : dict
         A dictionary containing data per cluster (i.e. neuron)
     channels : dict
-        A dictionary containing data per channel 
+        A dictionary containing data per channel
     """
-    
+
     # Convert path to Pathlib if necessary
-    if type(session_path) == str:
+    if isinstance(session_path, str):
         session_path = Path(session_path)
-    
+
     # Load in spiking data
     spikes = dict()
     spikes['times'] = np.load(session_path / probe / 'spikes.times.npy')
     spikes['clusters'] = np.load(session_path / probe / 'spikes.clusters.npy')
-    spikes['amps'] = np.load(session_path /probe / 'spikes.amps.npy')
+    spikes['amps'] = np.load(session_path / probe / 'spikes.amps.npy')
     spikes['depths'] = np.load(session_path / probe / 'spikes.depths.npy')
-    
+
     # Load in cluster data
     clusters = dict()
     clusters['channels'] = np.load(session_path / probe / 'clusters.channels.npy')
     clusters['depths'] = np.load(session_path / probe / 'clusters.depths.npy')
     clusters['amps'] = np.load(session_path / probe / 'clusters.amps.npy')
     clusters['cluster_id'] = np.arange(clusters['channels'].shape[0])
-    
+
     # Add cluster qc metrics
     if (session_path / probe / 'clusters.bombcellLabels.npy').is_file():
         clusters['bombcell_label'] = np.load(session_path / probe / 'clusters.bombcellLabels.npy')
@@ -123,18 +164,18 @@ def load_neural_data(session_path, probe, histology=False, keep_units='all'):
         clusters['kilosort_label'] = np.load(session_path / probe / 'clusters.KSLabel.npy')
     if (session_path / probe / 'clusters.manualLabels.npy').is_file():
         clusters['manual_label'] = np.load(session_path / probe / 'clusters.manualLabels.npy')
-        
+
     # Load in channel data
     channels = dict()
     if histology:
         if not (session_path / probe / 'channel_locations.json').is_file():
             raise Exception('No aligned channel locations found! Set histology to False to load data without brain regions.')
-        
+
         # Load in alignment GUI output
         f = open(session_path / probe / 'channel_locations.json')
         channel_locations = json.load(f)
         f.close()
-        
+
         # Add channel information to channel dict        
         brain_region, brain_region_id, x, y, z = [], [], [], [], []
         for i, this_ch in enumerate(channel_locations.keys()):
@@ -150,15 +191,15 @@ def load_neural_data(session_path, probe, histology=False, keep_units='all'):
         channels['x'] = np.array(x)
         channels['y'] = np.array(y)
         channels['z'] = np.array(z)
-        
+
         # Use the channel location to infer the brain regions of the clusters
         clusters['acronym'] = channels['acronym'][clusters['channels']]
-            
+
     # Load in the local coordinates of the probe
     local_coordinates = np.load(session_path / probe / 'channels.localCoordinates.npy')
     channels['lateral_um'] = local_coordinates[:, 0]
     channels['axial_um'] = local_coordinates[:, 1]
-        
+
     # Only keep the neurons that are manually labeled as good
     if keep_units == 'all':
         return spikes, clusters, channels
@@ -184,7 +225,7 @@ def load_neural_data(session_path, probe, histology=False, keep_units='all'):
         good_units = np.where(clusters['manual_label'] == 'good')[0]
     else:
         raise Exception('keep_units shoud be all, bombcell, unitrefine, ibl or manual')
-      
+
     spikes['times'] = spikes['times'][np.isin(spikes['clusters'], good_units)]
     spikes['amps'] = spikes['amps'][np.isin(spikes['clusters'], good_units)]
     spikes['depths'] = spikes['depths'][np.isin(spikes['clusters'], good_units)]
@@ -194,7 +235,5 @@ def load_neural_data(session_path, probe, histology=False, keep_units='all'):
     clusters['cluster_id'] = clusters['cluster_id'][good_units]
     if histology:
         clusters['acronym'] = clusters['acronym'][good_units]
-        
+
     return spikes, clusters, channels
-        
-        

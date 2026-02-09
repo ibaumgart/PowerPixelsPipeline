@@ -51,9 +51,12 @@ if __name__ == "__main__":
                 
                 # Decompress raw data if necessary
                 pp.decompress()
+        
+                # Load in raw data
+                rec = pp.load_raw_binary()
                 
                 # Preprocessing
-                rec = pp.preprocessing()
+                rec = pp.preprocessing(rec)
                 
                 # Spike sorting
                 print(f'\nStarting {this_probe} spike sorting at {datetime.now().strftime("%H:%M")}')

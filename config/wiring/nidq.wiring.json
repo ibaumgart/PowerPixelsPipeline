@@ -1,0 +1,14 @@
+{
+    "SYSTEM": "3B",
+    "SYNC_WIRING_DIGITAL": {
+        "P0.0": "vns_train",
+        "P0.1": "imec_sync",
+        "P0.2": "paw_tap",
+        "P0.4": "jaw_tap",
+        "P0.6": "tail_tap"
+    },
+    "SYNC_WIRING_ANALOG": {
+        "AI0": "vns_current",
+        "AI2": "vns_voltage"
+    }
+}

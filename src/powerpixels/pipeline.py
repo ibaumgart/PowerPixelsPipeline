@@ -4,6 +4,7 @@
 Developed by Guido Meijer (www.guidomeijer.com)
 
 """
+# flake8: noqa E501
 
 import numpy as np
 import pandas as pd
@@ -16,24 +17,30 @@ from glob import glob
 import json
 from scipy.signal import welch, find_peaks
 import spikeinterface.full as si
+from spikeinterface.core.template_tools import get_template_extremum_channel
 import mtscomp
 from brainbox.metrics.single_units import spike_sorting_metrics
 from brainbox.metrics.single_units import METRICS_PARAMS as ibl_qc_default_params
 from ibllib.ephys.spikes import sync_spike_sorting
 from ibllib.pipes.ephys_tasks import EphysSyncPulses, EphysSyncRegisterRaw, EphysPulses
-from .utils import load_neural_data
+import spikeglx
+from phylib.io.model import load_model
+from phylib.io.alf import EphysAlfCreator
+from .utils import load_neural_data, dump_json, load_json, threshold_vns_current
+
+DEFAULT_SETTINGS = load_json(Path(__file__).parent.parent.parent / 'config' / 'settings.json')
 
 
 class Pipeline:
-    
-    def __init__(self):
-        
+
+    def __init__(self, settings_file):
+
         project_root = Path(__file__).parent.parent.parent
         config_dir = project_root / 'config'
-        settings_file = config_dir / 'settings.json'
         bombcell_file = config_dir / 'bombcell_params.json'
         ibl_qc_file = config_dir / 'ibl_qc_params.json'
         unitrefine_file = config_dir / 'unitrefine_params.json'
+        self.settings = DEFAULT_SETTINGS
 
         # Check if the config file exists
         if not settings_file.is_file():
@@ -41,33 +48,34 @@ class Pipeline:
                 f'Configuration file not found at {settings_file}\n'
                 'Please run "powerpixels-setup" to create the default files.'
             )
-        
+
         # Load in config files
         with open(settings_file, 'r') as openfile:
-            self.settings = json.load(openfile)
-        if self.settings['SINGLE_SHANK'] not in ['car_local', 'car_global', 'destripe']:
-            raise ValueError('SINGLE_SHANK should be set to "car_global", "car_local" or "destripe"')
-        if self.settings['MULTI_SHANK'] not in ['car_local', 'car_global', 'destripe']:
-            raise ValueError('MULTI_SHANK should be set to "car_global", "car_local" or "destripe"')
+            cfg = json.load(openfile)
+        self.settings.update(cfg)
+        self.nidq_sync = dict()
+        self.sync_map = dict()
         if self.settings['USE_NIDAQ']:
-            with open(config_dir / 'wiring' / 'nidq.wiring.json', 'r') as openfile:
-                self.nidq_sync = json.load(openfile)
-        with open(config_dir /'wiring' / '3B.wiring.json', 'r') as openfile:
-            self.probe_sync = json.load(openfile)
+            self.nidq_sync = load_json(config_dir / 'wiring' / 'nidq.wiring.json')
+        self.probe_sync = load_json(config_dir / 'wiring' / '3B.wiring.json')
         with open(bombcell_file, 'r') as openfile:
             self.bombcell_params = json.load(openfile)
         with open(ibl_qc_file, 'r') as openfile:
             self.ibl_qc_params = json.load(openfile)
         with open(unitrefine_file, 'r') as openfile:
             self.unitrefine_params = json.load(openfile)
-                    
+
+        self.session_path = Path(self.settings['DATA_FOLDER'])
+        self.alf_path = self.session_path / 'alf'
+        os.makedirs(self.alf_path, exist_ok=True)
+
         # Check spike sorter
         if self.settings['SPIKE_SORTER'][:8] != 'kilosort':
             print('\n --- WARNING: use Kilosort (any version) for full functionality of the pipeline --- \n')
-        
+
         # Initialize spikeinterface parallel processing
         si.set_global_job_kwargs(n_jobs=self.settings['N_CORES'], progress_bar=True)
-        
+
         # Load in spike sorting parameters
         if (config_dir / 'sorter_params' / f'{self.settings["SPIKE_SORTER"]}_params.json').is_file():
             with open(config_dir / 'sorter_params'
@@ -76,10 +84,23 @@ class Pipeline:
         else:
             print('Did not find spike sorter parameter file, loading defaults..')
             self.sorter_params = si.get_default_sorter_params(self.settings['SPIKE_SORTER'])
-            
+
+        self.validate_settings()
+
+
+    def validate_settings(self):
+        if self.settings['SINGLE_SHANK'] not in ['car_local', 'car_global', 'destripe']:
+            raise ValueError('SINGLE_SHANK should be set to "car_global", "car_local" or "destripe"')
+        if self.settings['MULTI_SHANK'] not in ['car_local', 'car_global', 'destripe']:
+            raise ValueError('MULTI_SHANK should be set to "car_global", "car_local" or "destripe"')
+
+        for force_param in ['FORCE_NIDAQ', 'FORCE_SORT', 'FORCE_QC', 'FORCE_CURATE']:
+            if force_param not in self.settings:
+                self.settings[force_param] = False
+
 
     def detect_data_format(self):
-                
+    
         if len(list((self.session_path / 'raw_ephys_data').rglob('continuous.dat'))) > 0:
             self.data_format = 'openephys'
             print('OpenEphys recording detected')
@@ -94,13 +115,14 @@ class Pipeline:
     def restructure_files(self):
         """
         Restructure the raw data files
-    
+
         """
-        
+        raise NotImplementedError("Restructuring requested.")
+
         # Detect data format if necessary
         if not hasattr(self, 'data_format'):
             self.detect_data_format()
-        
+
         # Restructure SpikeGLX recording folder structure
         if ((self.data_format == 'spikeglx')
             and len([i for i in os.listdir(self.session_path / 'raw_ephys_data') if i[:5] == 'probe']) == 0):
@@ -111,120 +133,228 @@ class Pipeline:
             os.rmdir(self.session_path / 'raw_ephys_data' / orig_dir)
             for i, this_path in enumerate((self.session_path / 'raw_ephys_data').glob('*imec*')):
                 this_path.rename(self.session_path / 'raw_ephys_data' / ('probe0' + str(this_path)[-1]))
-                
+
         return
 
-        
-    def extract_sync_pulses(self):
+    def set_nidq_paths(self):
         """
-        Extract the synchronization pulses coming into the BNC breakout box of the NIDAQ
-        This also prepares for the synchronization of the spike times to the NIDAQ clock later on
-        
+        Create paths for the BNC breakout box of the NIDAQ
+
         """
-        
-        
+
         # Detect data format if necessary
         if not hasattr(self, 'data_format'):
             self.detect_data_format()
 
-        # Extract sync pulses from spikeGLX recordings
         if self.data_format == 'spikeglx':
             # Set path to nidq file
             if len(list((self.session_path / 'raw_ephys_data').glob('*.nidq.*bin'))) == 1:
                 self.nidq_file = list((self.session_path / 'raw_ephys_data').glob('*.nidq.*bin'))[0]        
-    
+            else:
+                print("No nidq.*bin file found.")
+                self.settings['USE_NIDAQ'] = False
+                self.settings['FORCE_NIDAQ'] = False
+                return
+
+        if not self.settings['FORCE_NIDAQ']:
+            if self.nidq_file.with_suffix('.wiring.json').exists():
+                self.nidq_sync = load_json(self.nidq_file.with_suffix('.wiring.json'))
+            if (self.session_path / 'raw_ephys_data' / '_spikeglx_sync.pinout.json').exists():
+                self.sync_map = load_json(self.session_path / 'raw_ephys_data' / '_spikeglx_sync.pinout.json')
+
+
+    def extract_sync_pulses(self):
+        """
+        Extract the synchronization pulses coming into the BNC breakout box of the NIDAQ
+        This also prepares for the synchronization of the spike times to the NIDAQ clock later on
+
+        """
+
+        # Extract sync pulses from spikeGLX recordings
+        if self.data_format == 'spikeglx':
+
             # Create synchronization file
-            with open(self.nidq_file.with_suffix('.wiring.json'), 'w') as fp:
-                json.dump(self.nidq_sync, fp, indent=1)
-            
-            # Create nidq sync file        
+            dump_json(self.nidq_sync, self.nidq_file.with_suffix('.wiring.json'))
+
+            # Create nidq sync file
             EphysSyncRegisterRaw(session_path=self.session_path, sync_collection='raw_ephys_data').run()            
-        
-            # Extract sync pulses    
+
+            # Extract sync pulses
             task = EphysSyncPulses(session_path=self.session_path, sync='nidq',
                                    sync_ext='bin', sync_namespace='spikeglx',
                                    sync_collection='raw_ephys_data',
                                    device_collection='raw_ephys_data')
             task.run()
-        
+
             # Extract digital sync timestamps
+            self.sync_map = spikeglx.get_sync_map(self.nidq_file.with_suffix('.wiring.json'))
+            dump_json(self.sync_map, join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.pinout.json'))
+
             sync_times = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.times.npy'))
             sync_polarities = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.polarities.npy'))
             sync_channels = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.channels.npy'))
-            for ii, ch_name in enumerate(self.nidq_sync['SYNC_WIRING_DIGITAL'].keys()):
-                if self.nidq_sync['SYNC_WIRING_DIGITAL'][ch_name] == 'imec_sync':
+            for ch_name, pin in self.sync_map.items():
+                if ch_name == 'imec_sync':
                     continue
-                nidq_pulses = sync_times[(sync_channels == int(ch_name[-1])) & (sync_polarities == 1)]
-                np.save(join(self.session_path, self.nidq_sync['SYNC_WIRING_DIGITAL'][ch_name] + '.times.npy'),
+                nidq_pulses = sync_times[(sync_channels == pin) & (sync_polarities == 1)]
+                np.save(join(self.alf_path, ch_name + '_onset.times.npy'),
                         nidq_pulses)
-                
-        elif self.data_format == 'openephys':
+                nidq_pulses = sync_times[(sync_channels == pin) & (sync_polarities == -1)]
+                np.save(join(self.alf_path, ch_name + '_offset.times.npy'),
+                        nidq_pulses)
+
+        else:
+            # elif self.data_format == 'openephys':
             # TO DO
             print('TO DO')
+            raise NotImplementedError("NIDAQ support for SpikeGLX recordings only")
+
+    def extract_stim_pulses(self):
+        if 'vns_current' not in self.sync_map:
+            print("No VNS current AI channel specified in " + str(self.nidq_file))
+            return
+
+        sync_times = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.times.npy'))
+        sync_channels = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.channels.npy'))
+        sync_polarities = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.polarities.npy'))
+
+        # Get VNS train digital pin
+        train_do = self.sync_map['vns_train']
+        train_onsets = sync_times[(sync_channels == train_do) & (sync_polarities == 1)]
+        train_offsets = sync_times[(sync_channels == train_do) & (sync_polarities == -1)]
+
+        # Remove pre onset offsets and post offset onsets
+        if len(train_onsets) > 0 or len(train_offsets) > 0:
+            train_onsets = train_onsets[train_onsets < train_offsets[-1]]
+            train_offsets = train_offsets[train_offsets > train_onsets[0]]
+        # Make on and off same length, convert to samples
+        sr = spikeglx.Reader(self.nidq_file)
+        train_onoff = (np.array(list(zip(train_onsets - 0.5, train_offsets + 0.5))) * sr.fs).astype(int)
+
+        # Get the VNS blanking period from ms to samples
+        blank_start, blank_stop = [int(t * sr.fs / 1000) for t in self.settings['VNS_BLANK']]
+        # Get the VNS analog indices from combined indices
+        current_idx = self.sync_map['vns_current'] - 16
+        voltage_idx = -1
+        if 'vns_voltage' in self.sync_map:
+            voltage_idx = self.sync_map['vns_voltage'] - 16
+
+        vns_times, vns_train, vns_current, vns_voltage = [], [], [], []
+        for tr_i, (tr_on, tr_off) in enumerate(train_onoff):
+            analog_tr = sr.read_sync_analog(slice(tr_on, tr_off))
+            current_thresh = threshold_vns_current(analog_tr[:, current_idx])
+            pulse_onset = np.where(np.diff(current_thresh) == 1)[0]
+            vns_times.append((pulse_onset + tr_on) / sr.fs)
+            vns_train.append(np.full_like(pulse_onset, fill_value=tr_i))
+
+            for p_i, p_on in enumerate(pulse_onset):
+                vns_current.append(analog_tr[blank_start + p_on:blank_stop + p_on, current_idx])
+                if voltage_idx > 0:
+                    vns_voltage.append(analog_tr[blank_start + p_on:blank_stop + p_on, voltage_idx])
+
+        if len(vns_times):
+            vns_times = np.hstack(vns_times)
+        if len(vns_train):
+            vns_train = np.hstack(vns_train)
+        if len(vns_current):
+            vns_current = np.vstack(vns_current)
+            vns_current_amps = np.max(np.abs(vns_current), axis=-1)
+        else:
+            vns_current_amps = []
+        if len(vns_voltage):
+            vns_voltage = np.vstack(vns_voltage)
+            vns_voltage_amps = np.max(np.abs(vns_voltage), axis=-1)
+        else:
+            vns_voltage_amps = []
+
+
+        np.save(join(self.alf_path, 'vns_pulse.times.npy'), vns_times)
+        np.save(join(self.alf_path, 'vns_pulse.train.npy'), vns_train)
+        np.save(join(self.alf_path, 'vns_current.waveforms.npy'), vns_current)
+        np.save(join(self.alf_path, 'vns_current.amps.npy'), vns_current_amps)
+        np.save(join(self.alf_path, 'vns_voltage.waveforms.npy'), vns_voltage)
+        np.save(join(self.alf_path, 'vns_voltage.amps.npy'), vns_voltage_amps)
+
+        if len(vns_current):
+            fig, axs = plt.subplots(len(train_onoff), 1)
+            for tr_i, ax in enumerate(axs):
+                ax.plot(np.arange(blank_start, blank_stop) / sr.fs, np.vstack(vns_current).T)
+            fig.suptitle("VNS Current Waveforms")
+            fig.savefig(join(self.alf_path, 'vns_pulse.current.png'))
+            plt.show()
+            plt.close(fig)
+
+        if len(vns_voltage):
+            fig, axs = plt.subplots(len(train_onoff), 1)
+            for tr_i, ax in enumerate(axs):
+                ax.plot(np.arange(blank_start, blank_stop) / sr.fs, np.vstack(vns_voltage).T)
+            fig.suptitle("VNS Voltage Waveforms")
+            fig.savefig(join(self.alf_path, 'vns_pulse.voltage.png'))
+            plt.show()
+            plt.close(fig)
 
 
     def set_probe_paths(self, probe):
-        
-        # Check if session path is defined
-        if not hasattr(self, 'session_path'):
-            raise ValueError('Define pp.session_path first!')
-            
+
         # Detect data format if necessary
         if not hasattr(self, 'data_format'):
             self.detect_data_format()
-        
+
         # Set the current probe and results directory
         self.this_probe = probe
-        self.results_path = self.session_path / (self.this_probe + self.settings['IDENTIFIER'])
-        self.sorter_path = (self.session_path
-                            / (self.settings['SPIKE_SORTER'] + self.settings['IDENTIFIER'])
-                            / self.this_probe)
-        
+        self.results_path = self.alf_path / self.this_probe
+        self.sorter_path = self.results_path / self.settings['SPIKE_SORTER']
+        os.makedirs(self.sorter_path, exist_ok=True)
+
         # Set SpikeGLX specific paths
         if self.data_format == 'spikeglx':
             self.probe_path = self.session_path / 'raw_ephys_data' / probe
             self.ap_file = list(self.probe_path.glob('*ap.*bin'))[0]
             if len(list((self.session_path / 'raw_ephys_data' / probe).glob('*ap.meta'))) == 1:
                 self.meta_file = list(self.probe_path.glob('*ap.meta'))[0]
-        
+            if os.path.exists(self.ap_file.with_suffix('.wiring.json')):
+                self.probe_sync = load_json(self.ap_file.with_suffix('.wiring.json'))
+
         # Set OpenEphys specific paths
         elif self.data_format == 'openephys':
             for ap_path in (self.session_path / 'raw_ephys_data').rglob('continuous*'):
-                if ((ap_path.parent.parts[-1].split('.')[-1] == f'{self.this_probe}-AP')
-                    or (ap_path.parent.parts[-1].split('.')[-1] == f'{self.this_probe}')):
+                if (
+                    (ap_path.parent.parts[-1].split('.')[-1] == f'{self.this_probe}-AP')
+                    or (ap_path.parent.parts[-1].split('.')[-1] == f'{self.this_probe}')
+                ):
                     self.ap_file = ap_path
             self.meta_file = list((self.session_path / 'raw_ephys_data').rglob('structure.oebin'))[0]
 
         return
-    
-    
+
+
     def decompress(self):
         """
         Decompress data before running the pipeline, some elements like Bombcell need to have
         uncompressed raw data as input
-        
+
         """
 
         # If data is not compressed stop this process
         if (self.ap_file.suffix == '.bin') or (self.ap_file.suffix == '.dat'):
             return
-        
+
         if self.ap_file.suffix == '.cbin':
-            
+
             # Recording is compressed by a previous run, decompress it before spike sorting
             ch_path = list(self.probe_path.glob('*ch'))[0]
             r = mtscomp.Reader(chunk_duration=1.)
             r.open(self.ap_file, ch_path)
             r.tofile(self.ap_file.parent / (self.ap_file.stem + '.bin'))
             r.close()
-            
-            # Remove compressed bin file after decompression
-            if self.ap_file.is_file() and Path(self.ap_file.stem + '.bin').is_file():
-                os.remove(self.ap_file)
+
+            # # Remove compressed bin file after decompression
+            # if self.ap_file.is_file() and Path(self.ap_file.stem + '.bin').is_file():
+            #     os.remove(self.ap_file)
             self.ap_file = self.ap_file.parent / (self.ap_file.stem + '.bin')
-            
+
         elif self.ap_file.suffix == '.zarr':
-            
+
             # Decompress zarr file
             comp_rec = si.load_extractor(self.ap_file)
             si.write_binary_recording(
@@ -234,25 +364,24 @@ class Pipeline:
             if self.ap_file.is_dir() and Path(self.ap_file.stem + '.dat').is_file():
                 shutil.rmtree(self.ap_file)
             self.ap_file = self.ap_file.parent / (self.ap_file.stem + '.dat')
-            
+
         return
-            
-    
+
     def load_raw_binary(self):
-        
+
         # Detect data format if necessary
         if not hasattr(self, 'data_format'):
             self.detect_data_format()
-            
+
         # Load in raw data
         if self.data_format == 'spikeglx':
             if len(glob(join(self.probe_path, '*ap.cbin'))) > 0:
                 rec = si.read_cbin_ibl(self.probe_path)
-            else: 
+            else:
                 rec = si.read_spikeglx(
                     self.probe_path,
                     stream_id=si.get_neo_streams('spikeglx', self.probe_path)[0][0])
-        
+
         elif self.data_format == 'openephys':
             stream_names, _ = si.read_openephys(
                 self.session_path, stream_id='0').get_streams(self.session_path)
@@ -262,15 +391,15 @@ class Pipeline:
             elif len(these_streams) == 2:  # NP1 recording
                 rec_stream = [i for i in stream_names if self.this_probe + '-AP' in i][0]
             rec = si.read_openephys(self.session_path, stream_name=rec_stream)
-            
+
         return rec
-    
-    
-    def preprocessing(self):
+
+    def preprocessing(self, rec: si.BaseRecording):
         """
         Run all the preprocessing steps before spike sorting.
-        
-        1. High pass filter
+
+        0. High pass filter
+        1. Remove stimulation artifacts
         2. Correct for the inter-sample shift in acquisition 
         3. Detect noisy channels and channels outside of the brain
         4. Remove channels out of the brain and interpolate over noisy channels
@@ -284,20 +413,61 @@ class Pipeline:
             The final preprocessed recording as a SpikeInterface object.
 
         """
-        
-        # Load in raw data
-        rec = self.load_raw_binary()
-                    
+
         # Apply high-pass filter
-        print('\nApplying high-pass filter.. ')
+        print('Applying high-pass filter.. ')
         rec_filtered = si.highpass_filter(rec, dtype='float32')
-                    
+
         # Correct for inter-sample phase shift
         print('Correcting for phase shift.. ')
         rec_shifted = si.phase_shift(rec_filtered)
+
+        # Remove stimulation artifacts
+        rec_rm = rec_shifted
+        if self.settings['USE_NIDAQ']:
+            if 'VNS_BLANK' in self.settings:
+                print('Removing stimulation artifact.. ')
+                stim_times = np.load(self.alf_path / 'vns_pulse.times.npy')
+                stim_times_list = []
+                for segi in range(rec_rm.get_num_segments()):
+                    start = rec_rm.get_start_time(segment_index=segi)
+                    end = rec_rm.get_end_time(segment_index=segi)
+                    stim_times_list.append(
+                        (stim_times[np.logical_and(stim_times >= start, stim_times <= end)] * rec_rm.sampling_frequency).astype(int)
+                    )
+                rec_rm = si.remove_artifacts(
+                    rec_rm,
+                    stim_times_list,
+                    ms_before=self.settings['VNS_BLANK'][0],
+                    ms_after=self.settings['VNS_BLANK'][1],
+                    mode='linear'
+                )
+            if 'TAP_BLANK' in self.settings:
+                stim_times = []
+                for ch_name in ['tail_tap', 'jaw_tap', 'paw_tap']:
+                    print(f'Removing {ch_name} artifact.. ')
+                    for edge in ['onset', 'offset']:
+                        tap_file = f'{ch_name}_{edge}.times.npy'
+                        stim_times.append(np.load(self.alf_path / tap_file))
+                stim_times = np.hstack(stim_times)
+
+                stim_times_list = []
+                for segi in range(rec_rm.get_num_segments()):
+                    start = rec_rm.get_start_time(segment_index=segi)
+                    end = rec_rm.get_end_time(segment_index=segi)
+                    stim_times_list.append(
+                        (stim_times[np.logical_and(stim_times >= start, stim_times <= end)] * rec_rm.sampling_frequency).astype(int)
+                    )
+                rec_rm = si.remove_artifacts(
+                    rec_rm,
+                    stim_times_list,
+                    ms_before=self.settings['TAP_BLANK'][0],
+                    ms_after=self.settings['TAP_BLANK'][1],
+                    mode='linear'
+                )
                 
         # Do common average referencing before detecting bad channels
-        rec_comref = si.common_reference(rec_filtered)
+        rec_comref = si.common_reference(rec_rm)
         
         # Detect dead channels and channels outside of the brain first on the raw data
         print('Detecting and removing dead and out-of-the-brain channels.. ')
@@ -414,12 +584,17 @@ class Pipeline:
             
         """
         
+        if (self.sorter_path / 'raw_sorting').exists() and not self.settings['FORCE_SORT']:
+            sort = si.read_sorter_folder(self.sorter_path / 'raw_sorting')
+            return sort
+        
         # Run spike sorting
         try:
             sort = si.run_sorter(
                 self.settings['SPIKE_SORTER'],
                 rec,
-                folder=self.sorter_path,
+                folder=self.sorter_path / 'raw_sorting',
+                remove_existing_folder=True,
                 verbose=True,
                 docker_image=self.settings['USE_DOCKER'],
                 **self.sorter_params)
@@ -432,8 +607,8 @@ class Pipeline:
             logf.close()
             
             # Delete empty sorting directory
-            if self.sorter_path.is_dir():
-                shutil.rmtree(self.sorter_path)
+            # if self.sorter_path.is_dir():
+            #     shutil.rmtree(self.sorter_path)
             
             return None
         
@@ -453,17 +628,17 @@ class Pipeline:
 
         """
         
-        if isdir(join(self.results_path, 'sorting')):
-            return
-        
+        if os.path.exists(join(self.sorter_path, 'sorting')) and not self.settings['FORCE_QC']:
+            return si.load_sorting_analyzer(join(self.sorter_path, 'sorting'))
+
         # Create a sorting analyzer and save to disk as folder
         sorting_analyzer = si.create_sorting_analyzer(
             sorting=sort,
             recording=rec,
             format='binary_folder',
-            folder=join(self.results_path, 'sorting'),
-            overwrite=True
-            )           
+            folder=join(self.sorter_path, 'sorting'),
+            overwrite=self.settings['FORCE_QC']
+        )
         
         # Compute a bunch of attributes of the units
         sorting_analyzer.compute([
@@ -476,7 +651,8 @@ class Pipeline:
             'template_similarity',
             'unit_locations',
             'spike_amplitudes',
-            ])
+            'spike_locations'
+            ]) # amplitude_scalings, principle_components, template_metrics
                 
         # Compute quality metrics
         _ = sorting_analyzer.compute('quality_metrics', metric_names=si.get_quality_metric_list())    
@@ -495,23 +671,43 @@ class Pipeline:
         """
         
         # Load in sorting output
-        sorting_analyzer = si.load_sorting_analyzer(self.results_path / 'sorting')
-        
-        # Load in raw LFP 
-        rec_lfp = si.bandpass_filter(rec, freq_min=1, freq_max=300)
-        
-        # Export data to temporary folder
-        si.export_to_ibl_gui(
+        sorting_analyzer = si.load_sorting_analyzer(self.sorter_path / 'sorting')
+
+        si.export_to_phy(
             sorting_analyzer=sorting_analyzer,
-            output_folder=self.results_path / 'exported_data',
-            lfp_recording=rec_lfp,
-            n_jobs=-1
+            output_folder=self.sorter_path / 'phy',
+            compute_pc_features=False,
+            compute_amplitudes=True,
+            sparsity=None,
+            remove_if_exists=self.settings['FORCE_QC'],
+            add_quality_metrics=True,
+            add_template_metrics=True,
+        )
+
+        m = load_model(self.sorter_path / 'phy' / 'params.py')
+        _ = EphysAlfCreator(m).convert(
+            out_path=self.sorter_path,
+            force=self.settings['FORCE_QC'],
         )
         
+        # # Load in raw LFP 
+        # rec_lfp = si.bandpass_filter(rec, freq_min=1, freq_max=300)
+        
+        # # Export data to temporary folder
+        # si.export_to_ibl_gui(
+        #     sorting_analyzer=sorting_analyzer,
+        #     output_folder=self.results_path / 'exported_data',
+        #     lfp_recording=rec_lfp,
+        #     n_jobs=-1
+        # )
+        # extremum_channel_indices = get_template_extremum_channel(sorting_analyzer, outputs="index")
+        # spikes = sorting_analyzer.sorting.to_spike_vector(extremum_channel_inds=extremum_channel_indices)
+        # np.save(self.results_path / 'spikes.samples.npy', spikes["sample_index"])
+        
         # Copy the extracted data to the parent folder
-        for file_path in (self.results_path / 'exported_data').iterdir():
-            shutil.move(file_path, self.results_path)
-        (self.results_path / 'exported_data').rmdir()
+        # for file_path in (self.results_path / 'exported_data').iterdir():
+        #     shutil.copy2(file_path, self.results_path)
+        # (self.results_path / 'exported_data').rmdir()
         
         # Export to NWB
         if self.settings['NWB_EXPORT']:
@@ -562,7 +758,7 @@ class Pipeline:
         import bombcell as bc
         
         # Get kilosort good indication 
-        ks_metric = pd.read_csv(join(self.sorter_path / 'sorter_output', 'cluster_KSLabel.tsv'),
+        ks_metric = pd.read_csv(join(self.sorter_path / 'raw_sorting' / 'sorter_output', 'cluster_KSLabel.tsv'),
                                 sep='\t')
         
         # Run Bombcell
@@ -571,7 +767,7 @@ class Pipeline:
             kilosort_version = 2
         else:
             kilosort_version = int(self.settings['SPIKE_SORTER'][-1])
-        param = bc.get_default_parameters(self.sorter_path / 'sorter_output', 
+        param = bc.get_default_parameters(self.sorter_path / 'raw_sorting' / 'sorter_output', 
                                           raw_file=self.ap_file,
                                           meta_file=self.meta_file,
                                           kilosort_version=kilosort_version)
@@ -579,14 +775,14 @@ class Pipeline:
         param['verbose'] = False
         param.update(self.bombcell_params)
         quality_metrics, param, unit_type, unit_type_string = bc.run_bombcell(
-            self.sorter_path / 'sorter_output', self.results_path / 'bombcell', param)
+            self.sorter_path / 'raw_sorting' / 'sorter_output', self.sorter_path / 'bombcell', param)
         print('Done')
         
         # Run UnitRefine
         print('\nRunning UnitRefine model..', end=' ')
        
         # Load in recording
-        sorting_analyzer = si.load_sorting_analyzer(self.results_path / 'sorting')
+        sorting_analyzer = si.load_sorting_analyzer(self.sorter_path / 'sorting')
         
         # Run UnitRefine
         if self.unitrefine_params['noise_classification']:
@@ -678,8 +874,7 @@ class Pipeline:
         """
        
         # Create probe wiring file
-        with open(self.ap_file.with_suffix('.wiring.json'), 'w') as fp:
-            json.dump(self.probe_sync, fp, indent=1)
+        dump_json(self.probe_sync, self.ap_file.with_suffix('.wiring.json'))
        
         # Create probe sync file
         task = EphysPulses(session_path=self.session_path, pname=self.this_probe,

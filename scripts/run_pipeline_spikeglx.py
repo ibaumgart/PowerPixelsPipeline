@@ -7,88 +7,93 @@ Written by Guido Meijer
 from powerpixels import Pipeline
 
 import os
-from os.path import join, isdir
-import numpy as np
+import sys
 from datetime import datetime
 from pathlib import Path
+import spikeglx
 
-if __name__ == "__main__":
-    
+from SGLXMetaToCoords import MetaToCoords
+
+
+def main(config_path):
     # Initialize power pixels pipeline
-    pp = Pipeline()
-        
+    pp = Pipeline(config_path)
+
     # Search for process_me.flag
     print('Looking for process_me.flag..')
-    for root, directory, files in os.walk(pp.settings['DATA_FOLDER']):
-        if 'process_me.flag' in files:
-            print(f'\nStarting pipeline in {root} at {datetime.now().strftime("%H:%M")}\n')
-            
-            # Set session path
-            pp.session_path = Path(root)
-            
-            # Detect data format
-            pp.detect_data_format()
-            if pp.data_format == 'openephys':
-                print('WARNING: You are running the SpikeGLX pipeline on an OpenEphys recording!')
+    if 'process_me.flag' in os.listdir(pp.session_path):
+        print(f'\nStarting pipeline in {pp.session_path} at {datetime.now().strftime("%H:%M")}\n')
+
+        # Detect data format
+        pp.detect_data_format()
+        if pp.data_format == 'openephys':
+            print('WARNING: You are running the SpikeGLX pipeline on an OpenEphys recording!')
+            return
+
+        # Initialize NIDAQ synchronization
+        if pp.settings['USE_NIDAQ']:
+            pp.set_nidq_paths()
+            pp.extract_sync_pulses()
+            pp.extract_stim_pulses()
+
+        # Loop over multiple probes
+        raw_probes = spikeglx.get_probes_from_folder(pp.session_path)
+        for i, this_probe in enumerate(raw_probes):
+            print(f'\nStarting preprocessing of {this_probe}')
+
+            probe_index = f"probe{i:02d}"
+
+            # Set probe paths
+            pp.set_probe_paths(this_probe)
+
+            meta_path_dicts = spikeglx.glob_ephys_files(pp.session_path / 'raw_ephys_data', ext='meta')
+            for meta_path_dict in meta_path_dicts:
+                if 'ap' in meta_path_dict:
+                    MetaToCoords(meta_path_dict['ap'], outType=1)
+
+            # Decompress raw data if necessary
+            pp.decompress()
+
+            # Load in raw data
+            rec = pp.load_raw_binary()
+
+            # Preprocessing
+            rec = pp.preprocessing(rec)
+
+            # Spike sorting
+            print(f'\nStarting {this_probe} spike sorting at {datetime.now().strftime("%H:%M")}')
+            sort = pp.spikesorting(rec)
+            if sort is None:
+                print('Sorting failed!')
                 continue
-            
-            # Restructure file and folders
-            pp.restructure_files()
-            
-            # Initialize NIDAQ synchronization
-            if pp.settings['USE_NIDAQ']:
-                pp.extract_sync_pulses()
-            
-            # Loop over multiple probes 
-            probes = [i for i in os.listdir(pp.session_path / 'raw_ephys_data')
-                      if (i[:5] == 'probe') and (len(i) == 7)]
-            probe_done = np.zeros(len(probes)).astype(bool)
-            for i, this_probe in enumerate(probes):
-                print(f'\nStarting preprocessing of {this_probe}')
-                
-                # Set probe paths
-                pp.set_probe_paths(this_probe)
-                
-                # Check if probe is already processed
-                if isdir(join(pp.session_path, pp.this_probe + pp.settings['IDENTIFIER'])):
-                    print('Probe already processed, moving on')
-                    probe_done[i] = True
-                    continue
-                
-                # Decompress raw data if necessary
-                pp.decompress()
-                
-                # Preprocessing
-                rec = pp.preprocessing()
-                
-                # Spike sorting
-                print(f'\nStarting {this_probe} spike sorting at {datetime.now().strftime("%H:%M")}')
-                sort = pp.spikesorting(rec)   
-                if sort is None:
-                    print('Spike sorting failed!')
-                    continue
-                print(f'Detected {sort.get_num_units()} units\n')      
-                                       
-                # Create sorting analyzer for manual curation in SpikeInterface and save to disk
-                pp.neuron_metrics(sort, rec)
-                
-                # Export sorting results and LFP metrics
-                pp.export_data(rec)
-                
-                # Add indication if neurons are good from several sources to the quality metrics
-                pp.automatic_curation()
-                
-                # Synchronize spike sorting to the nidq clock
-                if pp.settings['BNC_BREAKOUT_BOX']:
-                    pp.probe_synchronization()
-                
-                # Compress raw data 
-                pp.compress_raw_data()            
-                            
-                probe_done[i] = True
-                print(f'Done! At {datetime.now().strftime("%H:%M")}')
-            
-            # Delete process_me.flag if all probes are processed
-            if np.sum(probe_done) == len(probes):
-                os.remove(os.path.join(root, 'process_me.flag'))
-       
+            print(f'Detected {sort.get_num_units()} units\n')
+
+            # Create sorting analyzer for manual curation in SpikeInterface and save to disk
+            pp.neuron_metrics(sort, rec)
+
+            # Export sorting results and LFP metrics
+            pp.export_data(rec)
+
+            # Add indication if neurons are good from several sources to the quality metrics
+            pp.automatic_curation()
+
+            # Synchronize spike sorting to the nidq clock
+            if pp.settings['BNC_BREAKOUT_BOX'] or pp.settings['FORCE_NIDAQ']:
+                pp.probe_synchronization()
+
+            # Compress raw data
+            pp.compress_raw_data()
+
+            print(f'Done! At {datetime.now().strftime("%H:%M")}')
+
+        # Delete process_me.flag if all probes are processed
+        # if np.sum(probe_done) == len(probes):
+        #     os.remove(os.path.join(root, 'process_me.flag'))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        config_path = Path(__file__).parent.parent / 'config' / 'test_settings.json'
+    else:
+        config_path = Path(sys.argv[1])
+    main(config_path)
