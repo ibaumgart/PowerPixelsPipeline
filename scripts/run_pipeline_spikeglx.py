@@ -3,6 +3,7 @@
 Written by Guido Meijer
 
 """
+# flake8: noqa E501
 
 from powerpixels import Pipeline
 

@@ -14,7 +14,7 @@
     "COMPRESS_RAW_DATA": true,
     "COMPRESSION": "mtscomp",
     "NWB_EXPORT": false,
-    "N_CORES": 2,
+    "N_CORES": 4,
     "FORCE_NIDAQ": true,
     "FORCE_SORT": false,
     "FORCE_QC": false,
