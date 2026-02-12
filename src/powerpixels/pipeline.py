@@ -24,7 +24,7 @@ from brainbox.metrics.single_units import METRICS_PARAMS as ibl_qc_default_param
 from ibllib.ephys.spikes import sync_spike_sorting
 from ibllib.pipes.ephys_tasks import EphysSyncPulses, EphysSyncRegisterRaw, EphysPulses
 import spikeglx
-from phylib.io.model import load_model
+from phylib.io.model import load_model, TemplateModel
 from phylib.io.alf import EphysAlfCreator
 from .utils import load_neural_data, dump_json, load_json, threshold_vns_current
 
@@ -33,7 +33,7 @@ DEFAULT_SETTINGS = load_json(Path(__file__).parent.parent.parent / 'config' / 's
 
 class Pipeline:
 
-    def __init__(self, settings_file):
+    def __init__(self, settings_file, data_path=None):
 
         project_root = Path(__file__).parent.parent.parent
         config_dir = project_root / 'config'
@@ -52,6 +52,8 @@ class Pipeline:
         # Load in config files
         with open(settings_file, 'r') as openfile:
             cfg = json.load(openfile)
+        if data_path is not None:
+            cfg['DATA_FOLDER'] = Path(data_path)
         self.settings.update(cfg)
         self.nidq_sync = dict()
         self.sync_map = dict()
@@ -177,7 +179,9 @@ class Pipeline:
             dump_json(self.nidq_sync, self.nidq_file.with_suffix('.wiring.json'))
 
             # Create nidq sync file
-            EphysSyncRegisterRaw(session_path=self.session_path, sync_collection='raw_ephys_data').run()            
+            EphysSyncRegisterRaw(session_path=self.session_path, sync_collection='raw_ephys_data').run()  
+            
+            self.nidq_file = self.nidq_file.with_suffix('.cbin')
 
             # Extract sync pulses
             task = EphysSyncPulses(session_path=self.session_path, sync='nidq',
@@ -661,6 +665,27 @@ class Pipeline:
         _ = si.compute_template_metrics(sorting_analyzer, include_multi_channel_metrics=True)
                                 
         return
+    
+    def phy_model_from_ks_path(self):
+        # https://github.com/int-brain-lab/ibllib/blob/master/ibllib/ephys/ephysqc.py#L455
+        NCH_WAVEFORMS=32
+        bin_file = self.ap_file
+        meta_file = self.ap_file.with_suffix('.meta')
+        if meta_file and meta_file.exists():
+            meta = spikeglx.read_meta_data(meta_file)
+            fs = spikeglx._get_fs_from_meta(meta)
+            nch = (spikeglx._get_nchannels_from_meta(meta) -
+                len(spikeglx._get_sync_trace_indices_from_meta(meta)))
+        else:
+            fs = 30000
+            nch = 384
+        m = TemplateModel(dir_path=self.sorter_path / "raw_sorting" / "sorter_output",
+                                dat_path=bin_file,  # this assumes the raw data is in the same folder
+                                sample_rate=fs,
+                                n_channels_dat=nch,
+                                n_closest_channels=NCH_WAVEFORMS)
+        m.depths = m.get_depths()
+        return m
         
 
     def export_data(self, rec):
@@ -670,44 +695,16 @@ class Pipeline:
         
         """
         
-        # Load in sorting output
-        sorting_analyzer = si.load_sorting_analyzer(self.sorter_path / 'sorting')
+        if not (self.sorter_path / 'spikes.amps.npy').exists() or self.settings['FORCE_QC']:
+            # Load in sorting output
+            sorting_analyzer = si.load_sorting_analyzer(self.sorter_path / 'sorting')
 
-        si.export_to_phy(
-            sorting_analyzer=sorting_analyzer,
-            output_folder=self.sorter_path / 'phy',
-            compute_pc_features=False,
-            compute_amplitudes=True,
-            sparsity=None,
-            remove_if_exists=self.settings['FORCE_QC'],
-            add_quality_metrics=True,
-            add_template_metrics=True,
-        )
-
-        m = load_model(self.sorter_path / 'phy' / 'params.py')
-        _ = EphysAlfCreator(m).convert(
-            out_path=self.sorter_path,
-            force=self.settings['FORCE_QC'],
-        )
-        
-        # # Load in raw LFP 
-        # rec_lfp = si.bandpass_filter(rec, freq_min=1, freq_max=300)
-        
-        # # Export data to temporary folder
-        # si.export_to_ibl_gui(
-        #     sorting_analyzer=sorting_analyzer,
-        #     output_folder=self.results_path / 'exported_data',
-        #     lfp_recording=rec_lfp,
-        #     n_jobs=-1
-        # )
-        # extremum_channel_indices = get_template_extremum_channel(sorting_analyzer, outputs="index")
-        # spikes = sorting_analyzer.sorting.to_spike_vector(extremum_channel_inds=extremum_channel_indices)
-        # np.save(self.results_path / 'spikes.samples.npy', spikes["sample_index"])
-        
-        # Copy the extracted data to the parent folder
-        # for file_path in (self.results_path / 'exported_data').iterdir():
-        #     shutil.copy2(file_path, self.results_path)
-        # (self.results_path / 'exported_data').rmdir()
+            print("Converting Phy to ALF")
+            m = self.phy_model_from_ks_path()
+            _ = EphysAlfCreator(m).convert(
+                out_path=self.sorter_path,
+                force=self.settings['FORCE_QC'],
+            )
         
         # Export to NWB
         if self.settings['NWB_EXPORT']:
@@ -725,11 +722,11 @@ class Pipeline:
                                                         stream_name=rec.stream_name)   
             metadata = interface.get_metadata()
             nwbfile = interface.create_nwbfile(metadata=metadata)
-            if not (self.results_path / 'NWB').is_dir():
-                (self.results_path / 'NWB').mkdir()            
+            if not (self.sorter_path / 'NWB').is_dir():
+                (self.sorter_path / 'NWB').mkdir()            
             write_sorting_analyzer_to_nwbfile(
                 sorting_analyzer=sorting_analyzer,
-                nwbfile_path=self.results_path / 'NWB' / 'sorting_output.nwb',
+                nwbfile_path=self.sorter_path / 'NWB' / 'sorting_output.nwb',
                 nwbfile=nwbfile,
                 metadata=metadata,
                 overwrite=True,
@@ -754,6 +751,8 @@ class Pipeline:
         None.
 
         """
+        if (self.sorter_path / 'cluster.metrics.csv').exists() and not self.settings['FORCE_CURATION']:
+            return
         
         import bombcell as bc
         
@@ -818,7 +817,7 @@ class Pipeline:
                 
         # Calculate IBL neuron level QC
         print('\nCalculating IBL neuron-level quality metrics..', end=' ')
-        spikes, clusters, channels = load_neural_data(self.session_path, self.this_probe)
+        spikes, clusters, channels = load_neural_data(self.session_path, self.this_probe, self.settings["SPIKE_SORTER"])
         ibl_qc_default_params.update(self.ibl_qc_params)
         df_units, rec_qc = spike_sorting_metrics(spikes['times'], spikes['clusters'],
                                                  spikes['amps'], spikes['depths'],
@@ -839,7 +838,7 @@ class Pipeline:
         
         
         # Add to quality metrics
-        qc_metrics = pd.read_csv(join(self.results_path, 'sorting', 'extensions', 'quality_metrics',
+        qc_metrics = pd.read_csv(join(self.sorter_path, 'sorting', 'extensions', 'quality_metrics',
                                       'metrics.csv'), index_col=0)
         qc_metrics['Kilosort'] = (ks_metric['KSLabel'] == 'good').astype(int)
         qc_metrics.insert(0, 'Kilosort', qc_metrics.pop('Kilosort'))
@@ -852,17 +851,17 @@ class Pipeline:
         
         # Save to disk
         qc_metrics.to_csv(join(
-            self.results_path, 'sorting', 'extensions', 'quality_metrics', 'metrics.csv'))
-        np.save(join(self.results_path, 'clusters.iblLabels.npy'), qc_metrics['IBL'])
-        np.save(join(self.results_path, 'clusters.kilosortLabels.npy'), qc_metrics['Kilosort'])
-        np.save(join(self.results_path, 'clusters.unitrefineLabels.npy'), qc_metrics['UnitRefine'])
-        np.save(join(self.results_path, 'clusters.bombcellLabels.npy'), qc_metrics['Bombcell'])
-        if isfile(join(self.results_path, 'cluster_KSLabel.tsv')):
-            os.remove(join(self.results_path, 'cluster_KSLabel.tsv'))
+            self.sorter_path, 'sorting', 'extensions', 'quality_metrics', 'metrics.csv'))
+        np.save(join(self.sorter_path, 'clusters.iblLabels.npy'), qc_metrics['IBL'])
+        np.save(join(self.sorter_path, 'clusters.kilosortLabels.npy'), qc_metrics['Kilosort'])
+        np.save(join(self.sorter_path, 'clusters.unitrefineLabels.npy'), qc_metrics['UnitRefine'])
+        np.save(join(self.sorter_path, 'clusters.bombcellLabels.npy'), qc_metrics['Bombcell'])
+        if isfile(join(self.sorter_path, 'cluster_KSLabel.tsv')):
+            os.remove(join(self.sorter_path, 'cluster_KSLabel.tsv'))
         
         # Copy quality metrics to output folder
-        shutil.copy(join(self.results_path, 'sorting', 'extensions', 'quality_metrics', 'metrics.csv'),
-                    join(self.results_path, 'clusters.metrics.csv'))
+        shutil.copy(join(self.sorter_path, 'sorting', 'extensions', 'quality_metrics', 'metrics.csv'),
+                    join(self.sorter_path, 'clusters.metrics.csv'))
         
         return
     
@@ -883,7 +882,7 @@ class Pipeline:
         task.run()
         
         # Synchronize spike sorting to nidq clock
-        sync_spike_sorting(self.ap_file, self.results_path)
+        sync_spike_sorting(self.ap_file, self.sorter_path)
         
 
         return

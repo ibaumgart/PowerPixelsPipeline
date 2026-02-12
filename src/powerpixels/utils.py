@@ -98,7 +98,7 @@ def manual_curation(results_path):
         np.save(results_path / 'clusters.manualLabels.npy', manual_labels)
 
 
-def load_neural_data(session_path, probe, histology=False, keep_units='all'):
+def load_neural_data(session_path, probe, sorter, histology=False, keep_units='all'):
     """
     Helper function to read in the spike sorting output from the Power Pixels pipeline.
 
@@ -132,47 +132,49 @@ def load_neural_data(session_path, probe, histology=False, keep_units='all'):
     # Convert path to Pathlib if necessary
     if isinstance(session_path, str):
         session_path = Path(session_path)
+    
+    sorter_path = session_path / 'alf' / probe / sorter
 
     # Load in spiking data
     spikes = dict()
-    spikes['times'] = np.load(session_path / probe / 'spikes.times.npy')
-    spikes['clusters'] = np.load(session_path / probe / 'spikes.clusters.npy')
-    spikes['amps'] = np.load(session_path / probe / 'spikes.amps.npy')
-    spikes['depths'] = np.load(session_path / probe / 'spikes.depths.npy')
+    spikes['times'] = np.load(sorter_path / 'spikes.times.npy')
+    spikes['clusters'] = np.load(sorter_path / 'spikes.clusters.npy')
+    spikes['amps'] = np.load(sorter_path / 'spikes.amps.npy')
+    spikes['depths'] = np.load(sorter_path / 'spikes.depths.npy')
 
     # Load in cluster data
     clusters = dict()
-    clusters['channels'] = np.load(session_path / probe / 'clusters.channels.npy')
-    clusters['depths'] = np.load(session_path / probe / 'clusters.depths.npy')
-    clusters['amps'] = np.load(session_path / probe / 'clusters.amps.npy')
+    clusters['channels'] = np.load(sorter_path / 'clusters.channels.npy')
+    clusters['depths'] = np.load(sorter_path / 'clusters.depths.npy')
+    clusters['amps'] = np.load(sorter_path / 'clusters.amps.npy')
     clusters['cluster_id'] = np.arange(clusters['channels'].shape[0])
 
     # Add cluster qc metrics
-    if (session_path / probe / 'clusters.bombcellLabels.npy').is_file():
-        clusters['bombcell_label'] = np.load(session_path / probe / 'clusters.bombcellLabels.npy')
-    if (session_path / probe / 'clusters.unitrefineLabels.npy').is_file():
-        clusters['unitrefine_label'] = np.load(session_path / probe / 'clusters.unitrefineLabels.npy')
-    elif (session_path / probe / 'clusters.MLLabel.npy').is_file():  # legacy
-        clusters['unitrefine_label'] = np.load(session_path / probe / 'clusters.MLLabel.npy')
-    if (session_path / probe / 'clusters.iblLabels.npy').is_file():
-        clusters['ibl_label'] = np.load(session_path / probe / 'clusters.iblLabels.npy')
-    elif (session_path / probe / 'clusters.IBLLabel.npy').is_file():  # legacy
-        clusters['ibl_label'] = np.load(session_path / probe / 'clusters.IBLLabel.npy')
-    if (session_path / probe / 'clusters.kilosortLabels.npy').is_file():
-        clusters['kilosort_label'] = np.load(session_path / probe / 'clusters.kilosortLabels.npy')
-    elif (session_path / probe / 'clusters.KSLabel.npy').is_file():  # legacy
-        clusters['kilosort_label'] = np.load(session_path / probe / 'clusters.KSLabel.npy')
-    if (session_path / probe / 'clusters.manualLabels.npy').is_file():
-        clusters['manual_label'] = np.load(session_path / probe / 'clusters.manualLabels.npy')
+    if (sorter_path / 'clusters.bombcellLabels.npy').is_file():
+        clusters['bombcell_label'] = np.load(sorter_path / 'clusters.bombcellLabels.npy')
+    if (sorter_path / 'clusters.unitrefineLabels.npy').is_file():
+        clusters['unitrefine_label'] = np.load(sorter_path / 'clusters.unitrefineLabels.npy')
+    elif (sorter_path / 'clusters.MLLabel.npy').is_file():  # legacy
+        clusters['unitrefine_label'] = np.load(sorter_path / 'clusters.MLLabel.npy')
+    if (sorter_path / 'clusters.iblLabels.npy').is_file():
+        clusters['ibl_label'] = np.load(sorter_path / 'clusters.iblLabels.npy')
+    elif (sorter_path / 'clusters.IBLLabel.npy').is_file():  # legacy
+        clusters['ibl_label'] = np.load(sorter_path / 'clusters.IBLLabel.npy')
+    if (sorter_path / 'clusters.kilosortLabels.npy').is_file():
+        clusters['kilosort_label'] = np.load(sorter_path / 'clusters.kilosortLabels.npy')
+    elif (sorter_path / 'clusters.KSLabel.npy').is_file():  # legacy
+        clusters['kilosort_label'] = np.load(sorter_path / 'clusters.KSLabel.npy')
+    if (sorter_path / 'clusters.manualLabels.npy').is_file():
+        clusters['manual_label'] = np.load(sorter_path / 'clusters.manualLabels.npy')
 
     # Load in channel data
     channels = dict()
     if histology:
-        if not (session_path / probe / 'channel_locations.json').is_file():
+        if not (sorter_path / 'channel_locations.json').is_file():
             raise Exception('No aligned channel locations found! Set histology to False to load data without brain regions.')
 
         # Load in alignment GUI output
-        f = open(session_path / probe / 'channel_locations.json')
+        f = open(sorter_path / 'channel_locations.json')
         channel_locations = json.load(f)
         f.close()
 
@@ -196,7 +198,7 @@ def load_neural_data(session_path, probe, histology=False, keep_units='all'):
         clusters['acronym'] = channels['acronym'][clusters['channels']]
 
     # Load in the local coordinates of the probe
-    local_coordinates = np.load(session_path / probe / 'channels.localCoordinates.npy')
+    local_coordinates = np.load(sorter_path / 'channels.localCoordinates.npy')
     channels['lateral_um'] = local_coordinates[:, 0]
     channels['axial_um'] = local_coordinates[:, 1]
 
