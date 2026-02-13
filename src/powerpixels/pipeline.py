@@ -52,8 +52,7 @@ class Pipeline:
         # Load in config files
         with open(settings_file, 'r') as openfile:
             cfg = json.load(openfile)
-        if data_path is not None:
-            cfg['DATA_FOLDER'] = Path(data_path)
+        cfg['DATA_FOLDER'] = Path(data_path)
         self.settings.update(cfg)
         self.nidq_sync = dict()
         self.sync_map = dict()
@@ -68,7 +67,7 @@ class Pipeline:
             self.unitrefine_params = json.load(openfile)
 
         self.session_path = Path(self.settings['DATA_FOLDER'])
-        self.alf_path = self.session_path / 'alf'
+        self.alf_path = self.session_path / f"alf-{self.settings['IDENTIFIER']}"
         os.makedirs(self.alf_path, exist_ok=True)
 
         # Check spike sorter
@@ -513,8 +512,12 @@ class Pipeline:
             if self.settings['MULTI_SHANK'] == 'car_global':
                 rec_processed = si.common_reference(rec_interpolated)
             elif self.settings['MULTI_SHANK'] == 'car_local':
-                rec_processed = si.common_reference(rec_interpolated, reference='local',
-                                                    local_radius=self.settings['LOCAL_RADIUS'])
+                try:
+                    rec_processed = si.common_reference(rec_interpolated, reference='local',
+                                                        local_radius=self.settings['LOCAL_RADIUS'])
+                except AssertionError as e:
+                    print("Unable to do local reference, defaulting to global")
+                    rec_processed = si.common_reference(rec_interpolated)
             elif self.settings['MULTI_SHANK'] == 'destripe':
                 print('Performing destriping per shank')
                 rec_split = rec_interpolated.split_by(property='group')

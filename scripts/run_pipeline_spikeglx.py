@@ -17,17 +17,11 @@ import spikeinterface.full as si
 from SGLXMetaToCoords import MetaToCoords
 
 
-def main(config_path, data_path=None):
-    # Initialize power pixels pipeline
-    if data_path is None:
-        with open(config_path, 'r') as f:
-            cfg = json.load(f)
-        data_path = cfg['DATA_FOLDER']
-
+def main(config_path, data_path):
     # Search for process_me.flag
     for root, directory, files in os.walk(data_path):
         if 'process_me.flag' in files:
-            pp = Pipeline(config_path, data_path)
+            pp = Pipeline(config_path, root)
             print(f'\nStarting pipeline in {pp.session_path} at {datetime.now().strftime("%H:%M")}\n')
 
             # Detect data format
@@ -104,8 +98,11 @@ def main(config_path, data_path=None):
 
 
 if __name__ == "__main__":
+    data_path = Path.home() / "Box/Neuropixels_Sharing/CATGT"
     if len(sys.argv) < 2:
-        config_path = Path(__file__).parent.parent / 'config' / 'test_settings.json'
+        config_path = Path(__file__).parent.parent / 'config' / 'settings.json'
     else:
         config_path = Path(sys.argv[1])
-    main(config_path)
+        if len(sys.argv) > 2:
+            data_path = sys.argv[2]
+    main(config_path, data_path)

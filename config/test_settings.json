@@ -1,7 +1,6 @@
 {
     "SPIKE_SORTER": "kilosort4",
     "IDENTIFIER": "testing",
-    "DATA_FOLDER": "C:/Users/ixb240017/Box/Neuropixels_Sharing/CATGT/20260121_LCP05/LC_g1_t0",
     "SINGLE_SHANK": "car_local",
     "MULTI_SHANK": "car_local",
     "LOCAL_RADIUS": [
