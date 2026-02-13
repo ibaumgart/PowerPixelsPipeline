@@ -1,7 +1,6 @@
 {
     "SPIKE_SORTER": "kilosort4",
     "IDENTIFIER": "testing",
-    "DATA_FOLDER": "D:/ianba/Documents/Data/kilosort/20260121_LCP05/LC_g4_t2",
     "SINGLE_SHANK": "car_local",
     "MULTI_SHANK": "car_local",
     "LOCAL_RADIUS": [

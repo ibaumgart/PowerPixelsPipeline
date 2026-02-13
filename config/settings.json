@@ -1,12 +1,11 @@
 {
     "SPIKE_SORTER": "kilosort4",
-    "IDENTIFIER": "",
-    "DATA_FOLDER": "C:\\path\\to\\data",
+    "IDENTIFIER": "STD_20260212",
     "SINGLE_SHANK": "car_local",
     "MULTI_SHANK": "car_local",
     "LOCAL_RADIUS": [
         40,
-        240
+        200
     ],
     "PEAK_THRESHOLD": 0.0025,
     "USE_NIDAQ": true,
