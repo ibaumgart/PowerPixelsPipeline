@@ -232,7 +232,7 @@ class Pipeline:
             train_offsets = train_offsets[train_offsets > train_onsets[0]]
         # Make on and off same length, convert to samples
         sr = spikeglx.Reader(self.nidq_file)
-        train_onoff = (np.array(list(zip(train_onsets - 0.5, train_offsets + 0.5))) * sr.fs).astype(int)
+        train_onoff = (np.array(list(zip(train_onsets - 0.005, train_offsets + 0.005))) * sr.fs).astype(int)
 
         # Get the VNS blanking period from ms to samples
         blank_start, blank_stop = [int(t * sr.fs / 1000) for t in self.settings['VNS_BLANK']]
