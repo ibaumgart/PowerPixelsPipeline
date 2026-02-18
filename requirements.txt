@@ -1,0 +1,6 @@
+spikeinterface
+ibl-neuropixel
+ibllib
+bombcell
+kilosort
+neuroconv
