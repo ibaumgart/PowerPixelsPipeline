@@ -54,14 +54,11 @@ def run(config_path, data_path):
                 MetaToCoords(meta_path_dict['ap'], outType=1)
 
         print(f'\nLoading {this_probe} recording')
-        if not pp.settings['FORCE_SORT'] and (pp.sorter_path / 'raw_sorting').exists():
-            rec = si.load(pp.sorter_path / 'raw_sorting' / 'spikeinterface_recording.json')
-        else:
-            # Load in raw data
-            rec = pp.load_raw_binary()
+        # Load in raw data
+        rec = pp.load_raw_binary()
 
-            # Preprocessing
-            rec = pp.preprocessing(rec)
+        # Preprocessing
+        rec = pp.preprocessing(rec)
 
         # Spike sorting
         print(f'\nStarting {this_probe} spike sorting at {datetime.now().strftime("%H:%M")}')
@@ -109,11 +106,12 @@ def main(config_path, data_path):
 
 
 if __name__ == "__main__":
-    data_path = Path.home() / "Box/Neuropixels_Sharing/CATGT/20260114_ABATE128"
+    data_prefix = Path.home() / "Box/Neuropixels_Sharing/CATGT/"
+    data_path = data_prefix / "20260218_ABATE125"
     if len(sys.argv) < 2:
         config_path = Path(__file__).parent.parent / 'config' / 'settings.json'
     else:
         config_path = Path(sys.argv[1])
         if len(sys.argv) > 2:
-            data_path = sys.argv[2]
+            data_path = data_prefix / sys.argv[2]
     main(config_path, data_path)

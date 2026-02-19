@@ -237,10 +237,10 @@ class Pipeline:
         # Get the VNS blanking period from ms to samples
         blank_start, blank_stop = [int(t * sr.fs / 1000) for t in self.settings['VNS_BLANK']]
         # Get the VNS analog indices from combined indices
-        current_idx = self.sync_map['vns_current'] - 16
+        current_idx = 0 # TODO: Make remove hardcode
         voltage_idx = -1
         if 'vns_voltage' in self.sync_map:
-            voltage_idx = self.sync_map['vns_voltage'] - 16
+            voltage_idx = 1
 
         vns_times, vns_train, vns_current, vns_voltage = [], [], [], []
         for tr_i, (tr_on, tr_off) in enumerate(train_onoff):
@@ -284,7 +284,6 @@ class Pipeline:
                 ax.plot(np.arange(blank_start, blank_stop) / sr.fs, np.vstack(vns_current).T)
             fig.suptitle("VNS Current Waveforms")
             fig.savefig(join(self.alf_path, 'vns_pulse.current.png'))
-            plt.show()
             plt.close(fig)
 
         if len(vns_voltage):
@@ -293,7 +292,6 @@ class Pipeline:
                 ax.plot(np.arange(blank_start, blank_stop) / sr.fs, np.vstack(vns_voltage).T)
             fig.suptitle("VNS Voltage Waveforms")
             fig.savefig(join(self.alf_path, 'vns_pulse.voltage.png'))
-            plt.show()
             plt.close(fig)
 
 
@@ -441,8 +439,8 @@ class Pipeline:
                 rec_rm = si.remove_artifacts(
                     rec_rm,
                     stim_times_list,
-                    ms_before=self.settings['VNS_BLANK'][0],
-                    ms_after=self.settings['VNS_BLANK'][1],
+                    ms_before=abs(self.settings['VNS_BLANK'][0]),
+                    ms_after=abs(self.settings['VNS_BLANK'][1]),
                     mode='linear'
                 )
             if 'TAP_BLANK' in self.settings:
@@ -464,8 +462,8 @@ class Pipeline:
                 rec_rm = si.remove_artifacts(
                     rec_rm,
                     stim_times_list,
-                    ms_before=self.settings['TAP_BLANK'][0],
-                    ms_after=self.settings['TAP_BLANK'][1],
+                    ms_before=abs(self.settings['TAP_BLANK'][0]),
+                    ms_after=abs(self.settings['TAP_BLANK'][1]),
                     mode='linear'
                 )
                 
@@ -776,9 +774,13 @@ class Pipeline:
         param['plotGlobal'] = False
         param['verbose'] = False
         param.update(self.bombcell_params)
-        quality_metrics, param, unit_type, unit_type_string = bc.run_bombcell(
-            self.sorter_path / 'raw_sorting' / 'sorter_output', self.sorter_path / 'bombcell', param)
-        print('Done')
+        try:
+            quality_metrics, param, unit_type, unit_type_string = bc.run_bombcell(
+                self.sorter_path / 'raw_sorting' / 'sorter_output', self.sorter_path / 'bombcell', param)
+            print('Done')
+        except:
+            unit_type_string = False
+            print('Bombcell failed')
         
         # Run UnitRefine
         print('\nRunning UnitRefine model..', end=' ')
@@ -828,8 +830,11 @@ class Pipeline:
         print('Done')
         
         # Print results
-        n_units = unit_type_string.shape[0]
-        bc_perc = np.round((np.sum(unit_type_string == "GOOD") / n_units) * 100, 1)
+        n_units = len(ml_labels['prediction'])
+        if unit_type_string:
+            bc_perc = np.round((np.sum(unit_type_string == "GOOD") / n_units) * 100, 1)
+        else:
+            unit_type_string = np.full_like(ml_labels, fill_value="FAILED")
         ur_perc = np.round((np.sum(ml_labels['prediction'] == 'sua') / n_units) * 100, 1)
         ibl_perc = np.round((np.sum(df_units['label'] == 1) / n_units) * 100, 1)
         print('\n---------------------------------------------------------\n',

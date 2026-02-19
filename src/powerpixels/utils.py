@@ -38,7 +38,7 @@ def dump_json(obj, json_path):
         json.dump(obj, f, indent=1)
 
 
-def threshold_vns_current(current_trace, threshold_percentile=50, floor_percentile=10):
+def threshold_vns_current(current_trace, threshold_ptp=50, floor_percentile=10):
     """
     Thresholds VNS current trace
     :param _slice: samples slice
@@ -50,7 +50,7 @@ def threshold_vns_current(current_trace, threshold_percentile=50, floor_percenti
     if floor_percentile:
         current_trace -= np.percentile(current_trace, 10, axis=0)
     smooth_abs = medfilt(np.abs(current_trace), kernel_size=5)
-    threshold = np.percentile(smooth_abs, threshold_percentile, axis=0)
+    threshold =  threshold_ptp*np.ptp(smooth_abs)/100
     smooth_abs[np.where(smooth_abs < threshold)] = 0
     smooth_abs[np.where(smooth_abs >= threshold)] = 1
     return np.int8(smooth_abs)
