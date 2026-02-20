@@ -58,7 +58,7 @@ def analyze_time_chunk(rec_slice):
 
 
 def main(rec_path: Path):
-    pp = Pipeline(this_path.parent/'config'/'analyze_settings.json', rec_path)
+    pp = Pipeline(this_path.parent/'config'/'threshold_settings.json', rec_path)
 
     # Detect data format
     pp.detect_data_format()
@@ -75,8 +75,6 @@ def main(rec_path: Path):
     raw_probes = spikeglx.get_probes_from_folder(pp.session_path)
     for i, this_probe in enumerate(raw_probes):
         print(f'\nStarting preprocessing of {this_probe}')
-
-        probe_index = f"probe{i:02d}"
 
         # Set probe paths
         pp.set_probe_paths(this_probe)

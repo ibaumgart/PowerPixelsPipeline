@@ -1,0 +1,29 @@
+{
+    "SPIKE_SORTER": "kilosort4",
+    "IDENTIFIER": "STD_20260212",
+    "SINGLE_SHANK": "car_local",
+    "MULTI_SHANK": "car_local",
+    "LOCAL_RADIUS": [
+        40,
+        200
+    ],
+    "PEAK_THRESHOLD": 0.0025,
+    "USE_NIDAQ": true,
+    "USE_DOCKER": false,
+    "COMPRESS_RAW_DATA": true,
+    "COMPRESSION": "mtscomp",
+    "NWB_EXPORT": false,
+    "N_CORES": -1,
+    "FORCE_NIDAQ": true,
+    "FORCE_SORT": true,
+    "FORCE_QC": true,
+    "FORCE_CURATION": true,
+    "VNS_BLANK": [
+        -0.1,
+        2.0
+    ],
+    "TAP_BLANK": [
+        -0.1,
+        5.0
+    ]
+}

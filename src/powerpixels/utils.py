@@ -47,10 +47,13 @@ def threshold_vns_current(current_trace, threshold_ptp=50, floor_percentile=10):
         thresholding. This is to avoid DC offset drift
     :return: int8 array
     """
+    fl_pct = 0.
     if floor_percentile:
-        current_trace -= np.percentile(current_trace, 10, axis=0)
+        fl_pct = np.percentile(current_trace, 10, axis=0)
+        current_trace -= fl_pct
     smooth_abs = medfilt(np.abs(current_trace), kernel_size=5)
     threshold =  threshold_ptp*np.ptp(smooth_abs)/100
+    threshold = max(threshold, 0.08 - fl_pct)
     smooth_abs[np.where(smooth_abs < threshold)] = 0
     smooth_abs[np.where(smooth_abs >= threshold)] = 1
     return np.int8(smooth_abs)
@@ -98,7 +101,7 @@ def manual_curation(results_path):
         np.save(results_path / 'clusters.manualLabels.npy', manual_labels)
 
 
-def load_neural_data(session_path, probe, sorter, histology=False, keep_units='all'):
+def load_neural_data(sorter_path, histology_path=None, keep_units='all'):
     """
     Helper function to read in the spike sorting output from the Power Pixels pipeline.
 
@@ -128,12 +131,6 @@ def load_neural_data(session_path, probe, sorter, histology=False, keep_units='a
     channels : dict
         A dictionary containing data per channel
     """
-
-    # Convert path to Pathlib if necessary
-    if isinstance(session_path, str):
-        session_path = Path(session_path)
-    
-    sorter_path = session_path / 'alf' / probe / sorter
 
     # Load in spiking data
     spikes = dict()
@@ -169,14 +166,13 @@ def load_neural_data(session_path, probe, sorter, histology=False, keep_units='a
 
     # Load in channel data
     channels = dict()
-    if histology:
-        if not (sorter_path / 'channel_locations.json').is_file():
+    if histology_path is not None:
+        if not (histology_path / 'channel_locations.json').is_file():
             raise Exception('No aligned channel locations found! Set histology to False to load data without brain regions.')
 
         # Load in alignment GUI output
-        f = open(sorter_path / 'channel_locations.json')
-        channel_locations = json.load(f)
-        f.close()
+        with open(histology_path / 'channel_locations.json') as f:
+            channel_locations = json.load(f)
 
         # Add channel information to channel dict        
         brain_region, brain_region_id, x, y, z = [], [], [], [], []
@@ -235,7 +231,7 @@ def load_neural_data(session_path, probe, sorter, histology=False, keep_units='a
     clusters['depths'] = clusters['depths'][good_units]
     clusters['amps'] = clusters['amps'][good_units]
     clusters['cluster_id'] = clusters['cluster_id'][good_units]
-    if histology:
+    if histology_path:
         clusters['acronym'] = clusters['acronym'][good_units]
 
     return spikes, clusters, channels

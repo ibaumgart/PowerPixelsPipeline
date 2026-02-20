@@ -9,6 +9,7 @@ from powerpixels import Pipeline
 
 import os
 import sys
+import json
 from datetime import datetime
 from pathlib import Path
 import spikeglx
@@ -83,6 +84,9 @@ def run(config_path, data_path):
 
         # Compress raw data
         pp.compress_raw_data()
+        
+        with open(pp.alf_path / 'powerpixels_settings.json', 'w') as f:
+            json.dump(pp.settings)
 
         print(f'Done! At {datetime.now().strftime("%H:%M")}')
 
@@ -95,7 +99,6 @@ def main(config_path, data_path):
     # Search for process_me.flag
     for root, directory, files in os.walk(data_path):
         if 'process_me.flag' in files:
-            run(config_path, root)
             try:
                 run(config_path, root)
             except Exception as e:
@@ -107,7 +110,7 @@ def main(config_path, data_path):
 
 if __name__ == "__main__":
     data_prefix = Path.home() / "Box/Neuropixels_Sharing/CATGT/"
-    data_path = data_prefix / "20260218_ABATE125"
+    data_path = data_prefix / "20260218_ABATE125" / "LC_g6_t6"
     if len(sys.argv) < 2:
         config_path = Path(__file__).parent.parent / 'config' / 'settings.json'
     else:

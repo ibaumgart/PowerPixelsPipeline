@@ -149,7 +149,7 @@ class Pipeline:
 
         if self.data_format == 'spikeglx':
             # Set path to nidq file
-            if len(list((self.session_path / 'raw_ephys_data').glob('*.nidq.*bin'))) == 1:
+            if len(list((self.session_path / 'raw_ephys_data').glob('*.nidq.*bin'))) > 0:
                 self.nidq_file = list((self.session_path / 'raw_ephys_data').glob('*.nidq.*bin'))[0]        
             else:
                 print("No nidq.*bin file found.")
@@ -157,8 +157,8 @@ class Pipeline:
                 self.settings['FORCE_NIDAQ'] = False
                 return
 
-        if not self.settings['FORCE_NIDAQ']:
-            if self.nidq_file.with_suffix('.wiring.json').exists():
+        if self.settings['USE_NIDAQ']:
+            if (self.nidq_file.parent / 'nidq.wiring.json').exists():
                 self.nidq_sync = load_json(self.nidq_file.with_suffix('.wiring.json'))
             if (self.session_path / 'raw_ephys_data' / '_spikeglx_sync.pinout.json').exists():
                 self.sync_map = load_json(self.session_path / 'raw_ephys_data' / '_spikeglx_sync.pinout.json')
@@ -173,25 +173,27 @@ class Pipeline:
 
         # Extract sync pulses from spikeGLX recordings
         if self.data_format == 'spikeglx':
-
-            # Create synchronization file
-            dump_json(self.nidq_sync, self.nidq_file.with_suffix('.wiring.json'))
-
-            # Create nidq sync file
-            EphysSyncRegisterRaw(session_path=self.session_path, sync_collection='raw_ephys_data').run()  
             
-            self.nidq_file = self.nidq_file.with_suffix('.cbin')
+            if not (self.session_path / 'raw_ephys_data' / '_spikeglx_sync.times.npy').exists() or self.settings['FORCE_NIDAQ']:
+                
+                # Create synchronization file
+                dump_json(self.nidq_sync, self.nidq_file.with_suffix('.wiring.json'))
 
-            # Extract sync pulses
-            task = EphysSyncPulses(session_path=self.session_path, sync='nidq',
-                                   sync_ext='bin', sync_namespace='spikeglx',
-                                   sync_collection='raw_ephys_data',
-                                   device_collection='raw_ephys_data')
-            task.run()
+                # Create nidq sync file
+                EphysSyncRegisterRaw(session_path=self.session_path, sync_collection='raw_ephys_data').run()  
+                
+                self.nidq_file = self.nidq_file.with_suffix('.cbin')
 
-            # Extract digital sync timestamps
-            self.sync_map = spikeglx.get_sync_map(self.nidq_file.with_suffix('.wiring.json'))
-            dump_json(self.sync_map, join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.pinout.json'))
+                # Extract sync pulses
+                task = EphysSyncPulses(session_path=self.session_path, sync='nidq',
+                                    sync_ext='bin', sync_namespace='spikeglx',
+                                    sync_collection='raw_ephys_data',
+                                    device_collection='raw_ephys_data')
+                task.run()
+
+                # Extract digital sync timestamps
+                self.sync_map = spikeglx.get_sync_map(self.nidq_file.with_suffix('.wiring.json'))
+                dump_json(self.sync_map, join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.pinout.json'))
 
             sync_times = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.times.npy'))
             sync_polarities = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.polarities.npy'))
@@ -215,6 +217,7 @@ class Pipeline:
     def extract_stim_pulses(self):
         if 'vns_current' not in self.sync_map:
             print("No VNS current AI channel specified in " + str(self.nidq_file))
+            print(self.sync_map)
             return
 
         sync_times = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.times.npy'))
@@ -237,7 +240,7 @@ class Pipeline:
         # Get the VNS blanking period from ms to samples
         blank_start, blank_stop = [int(t * sr.fs / 1000) for t in self.settings['VNS_BLANK']]
         # Get the VNS analog indices from combined indices
-        current_idx = 0 # TODO: Make remove hardcode
+        current_idx = 0 # TODO: Remove hardcode
         voltage_idx = -1
         if 'vns_voltage' in self.sync_map:
             voltage_idx = 1
@@ -246,14 +249,19 @@ class Pipeline:
         for tr_i, (tr_on, tr_off) in enumerate(train_onoff):
             analog_tr = sr.read_sync_analog(slice(tr_on, tr_off))
             current_thresh = threshold_vns_current(analog_tr[:, current_idx])
+            # plt.plot(current_thresh), plt.title('current thresh'), plt.show()
             pulse_onset = np.where(np.diff(current_thresh) == 1)[0]
             vns_times.append((pulse_onset + tr_on) / sr.fs)
             vns_train.append(np.full_like(pulse_onset, fill_value=tr_i))
 
             for p_i, p_on in enumerate(pulse_onset):
-                vns_current.append(analog_tr[blank_start + p_on:blank_stop + p_on, current_idx])
-                if voltage_idx > 0:
-                    vns_voltage.append(analog_tr[blank_start + p_on:blank_stop + p_on, voltage_idx])
+                vns_tmp = np.zeros((blank_stop - blank_start,))
+                vns_tmp[:] = analog_tr[blank_start + p_on:blank_stop + p_on, current_idx]
+                vns_current.append(vns_tmp)
+                if voltage_idx > -1:
+                    vns_tmp = np.zeros((blank_stop - blank_start,))
+                    vns_tmp[:] = analog_tr[blank_start + p_on:blank_stop + p_on, voltage_idx]
+                    vns_voltage.append(vns_tmp)
 
         if len(vns_times):
             vns_times = np.hstack(vns_times)
@@ -279,18 +287,20 @@ class Pipeline:
         np.save(join(self.alf_path, 'vns_voltage.amps.npy'), vns_voltage_amps)
 
         if len(vns_current):
-            fig, axs = plt.subplots(len(train_onoff), 1)
-            for tr_i, ax in enumerate(axs):
-                ax.plot(np.arange(blank_start, blank_stop) / sr.fs, np.vstack(vns_current).T)
+            fig, axs = plt.subplots(5, (len(train_onoff) // 5) + 1)
+            for tr_i, ax in enumerate(axs.flat):
+                ax.plot(np.arange(blank_start, blank_stop) / sr.fs, vns_current[vns_train==tr_i].T)
             fig.suptitle("VNS Current Waveforms")
+            plt.tight_layout()
             fig.savefig(join(self.alf_path, 'vns_pulse.current.png'))
             plt.close(fig)
 
         if len(vns_voltage):
-            fig, axs = plt.subplots(len(train_onoff), 1)
-            for tr_i, ax in enumerate(axs):
-                ax.plot(np.arange(blank_start, blank_stop) / sr.fs, np.vstack(vns_voltage).T)
+            fig, axs = plt.subplots(5, (len(train_onoff) // 5) + 1)
+            for tr_i, ax in enumerate(axs.flat):
+                ax.plot(np.arange(blank_start, blank_stop) / sr.fs, vns_voltage[vns_train==tr_i].T)
             fig.suptitle("VNS Voltage Waveforms")
+            plt.tight_layout()
             fig.savefig(join(self.alf_path, 'vns_pulse.voltage.png'))
             plt.close(fig)
 
@@ -486,7 +496,7 @@ class Pipeline:
         
         # Now do a common reference and detect noisy channels
         print('Detecting and interpolating over noisy channels.. ')
-        rec_comref = si.common_reference(rec_shifted)
+        rec_comref = si.common_reference(rec_no_dead)
         bad_channel_ids, all_channels = si.detect_bad_channels(rec_comref, seed=42)
         prec_noise_ch = np.sum(all_channels == 'noise') / all_channels.shape[0]
         print(f'{np.sum(all_channels == "noise")} ({prec_noise_ch*100:.0f}%) noise channels')
@@ -532,7 +542,7 @@ class Pipeline:
         mean_power = np.mean(np.vstack(all_power), axis=0)
         
         # Detect peaks
-        peak_inds, peak_props = find_peaks(mean_power, threshold=self.settings['PEAK_THRESHOLD'])
+        peak_inds, peak_props = find_peaks(mean_power, prominence=self.settings['PEAK_THRESHOLD'])
         peak_freqs = f[peak_inds]
         peak_freqs = peak_freqs[peak_freqs > 2000]  # only select high frequency peaks
         print(f'Detected {peak_inds.shape[0]} peaks in the power spectrum')
@@ -779,7 +789,7 @@ class Pipeline:
                 self.sorter_path / 'raw_sorting' / 'sorter_output', self.sorter_path / 'bombcell', param)
             print('Done')
         except:
-            unit_type_string = False
+            unit_type_string = []
             print('Bombcell failed')
         
         # Run UnitRefine
@@ -822,7 +832,7 @@ class Pipeline:
                 
         # Calculate IBL neuron level QC
         print('\nCalculating IBL neuron-level quality metrics..', end=' ')
-        spikes, clusters, channels = load_neural_data(self.session_path, self.this_probe, self.settings["SPIKE_SORTER"])
+        spikes, clusters, channels = load_neural_data(self.sorter_path)
         ibl_qc_default_params.update(self.ibl_qc_params)
         df_units, rec_qc = spike_sorting_metrics(spikes['times'], spikes['clusters'],
                                                  spikes['amps'], spikes['depths'],
@@ -831,10 +841,12 @@ class Pipeline:
         
         # Print results
         n_units = len(ml_labels['prediction'])
-        if unit_type_string:
+        if len(unit_type_string):
             bc_perc = np.round((np.sum(unit_type_string == "GOOD") / n_units) * 100, 1)
         else:
             unit_type_string = np.full_like(ml_labels, fill_value="FAILED")
+            unit_type = np.full_like(ml_labels_int, fill_value=-1)
+            bc_perc = 0
         ur_perc = np.round((np.sum(ml_labels['prediction'] == 'sua') / n_units) * 100, 1)
         ibl_perc = np.round((np.sum(df_units['label'] == 1) / n_units) * 100, 1)
         print('\n---------------------------------------------------------\n',
@@ -906,6 +918,7 @@ class Pipeline:
         rec = self.load_raw_binary()
         
         if self.settings['COMPRESSION'] == 'zarr':
+            raise NotImplementedError("Zarr compression not implemented")
             
             if self.ap_file.suffix == '.zarr':
                 # Recording is already compressed by a previous run
@@ -938,7 +951,8 @@ class Pipeline:
                              dtype=rec.get_dtype())
             
             # Delete original bin file
-            os.remove(self.ap_file)
+            if self.ap_file.exists():
+                os.remove(self.ap_file)
             
             # Update reference to ap file
             self.ap_file = self.ap_file.parent / (str(self.ap_file.stem) + '.cbin')
