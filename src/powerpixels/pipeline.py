@@ -11,7 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 from os.path import join, isfile, isdir
-from pathlib import Path
+from pathlib import Path, WindowsPath
 import shutil
 from glob import glob
 import json
@@ -87,6 +87,14 @@ class Pipeline:
             self.sorter_params = si.get_default_sorter_params(self.settings['SPIKE_SORTER'])
 
         self.validate_settings()
+
+    
+    def settings_to_json():
+        out_dict = {}
+        for k, v in self.settings.items():
+            if isinstance(v, WindowsPath):
+                out_dict[k] = str(v)
+        return out_dict
 
 
     def validate_settings(self):

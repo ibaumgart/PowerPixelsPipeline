@@ -41,9 +41,10 @@ Created on Mon Dec 4 2023 by Guido Meijer
 import json
 from spikeinterface.sorters import get_default_sorter_params
 from pathlib import Path
- 
+
+
 def main():
-    
+
     # Get paths to where to save the configuration files (in the repository)
     project_root = Path(__file__).parent.parent.parent
     if not (project_root / 'config').is_dir():
@@ -52,7 +53,7 @@ def main():
     bombcell_file = project_root / 'config' / 'bombcell_params.json'
     ibl_qc_file = project_root / 'config' / 'ibl_qc_params.json'
     unitrefine_file = project_root / 'config' / 'unitrefine_params.json'
-    wiring_dir = project_root / 'config' /'wiring'
+    wiring_dir = project_root / 'config' / 'wiring'
     sorting_dir = project_root / 'config' / 'sorter_params'
     
     # Settings
