@@ -1,14 +1,27 @@
 {
-    "SYSTEM": "3B",
-    "SYNC_WIRING_DIGITAL": {
-        "P0.0": "vns_train",
-        "P0.1": "imec_sync",
-        "P0.2": "paw_tap",
-        "P0.4": "jaw_tap",
-        "P0.6": "tail_tap"
-    },
-    "SYNC_WIRING_ANALOG": {
-        "AI0": "vns_current",
-        "AI2": "vns_voltage"
-    }
+  "SYSTEM": "3B",
+  "DEVICE_NAME": "PXI1Slot5",
+  "SYNC_WIRING_DIGITAL": {
+    "P0.0": "vns_train",
+    "P0.1": "imec_sync",
+    "P0.2": "paw_tap",
+    "P0.4": "jaw_tap",
+    "P0.6": "tail_tap"
+  },
+  "SYNC_WIRING_ANALOG": {
+    "AI0": "vns_current",
+    "AI2": "vns_voltage"
+  },
+  "OUT_WIRING_DIGITAL": {
+    "P1.1": "vns_train",
+    "P0.3": "paw_tap",
+    "P0.5": "jaw_tap",
+    "P0.7": "tail_tap"
+  },
+  "OUT_WIRING_ANALOG": {
+    "AO1": "vns_current"
+  },
+  "SYNC_WIRING_TRIGGER": {
+    "PFI2": "vns_train"
+  }
 }

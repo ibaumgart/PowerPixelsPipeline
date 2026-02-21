@@ -52,7 +52,7 @@ def threshold_vns_current(current_trace, threshold_ptp=50, floor_percentile=10):
         fl_pct = np.percentile(current_trace, 10, axis=0)
         current_trace -= fl_pct
     smooth_abs = medfilt(np.abs(current_trace), kernel_size=5)
-    threshold =  threshold_ptp*np.ptp(smooth_abs)/100
+    threshold = threshold_ptp*np.ptp(smooth_abs)/100
     threshold = max(threshold, 0.08 - fl_pct)
     smooth_abs[np.where(smooth_abs < threshold)] = 0
     smooth_abs[np.where(smooth_abs >= threshold)] = 1
