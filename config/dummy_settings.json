@@ -1,4 +1,5 @@
 {
-    "SINGLE_SHANK": "global",
-    "MULTI_SHANK": "global"
+    "SINGLE_SHANK": "car_global",
+    "MULTI_SHANK": "car_global",
+    "SPIKE_SORTER": "kilosort4"
 }

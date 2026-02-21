@@ -11,7 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 from os.path import join, isfile, isdir
-from pathlib import Path
+from pathlib import Path, WindowsPath, PosixPath
 import shutil
 from glob import glob
 import json
@@ -98,6 +98,15 @@ class Pipeline:
         for force_param in ['FORCE_NIDAQ', 'FORCE_SORT', 'FORCE_QC', 'FORCE_CURATE']:
             if force_param not in self.settings:
                 self.settings[force_param] = False
+        
+    def settings_dict(self):
+        sd = {}
+        for k, v in self.settings.items():
+            if isinstance(v, WindowsPath) or isinstance(v, PosixPath):
+                sd[k] = str(v)
+            else:
+                sd[k] = v
+        return sd
 
 
     def detect_data_format(self):
@@ -762,7 +771,7 @@ class Pipeline:
         None.
 
         """
-        if (self.sorter_path / 'cluster.metrics.csv').exists() and not self.settings['FORCE_CURATION']:
+        if (self.sorter_path / 'clusters.metrics.csv').exists() and not self.settings['FORCE_CURATION']:
             return
         
         import bombcell as bc

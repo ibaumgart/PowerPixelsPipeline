@@ -86,7 +86,7 @@ def run(config_path, data_path):
         pp.compress_raw_data()
         
         with open(pp.alf_path / 'powerpixels_settings.json', 'w') as f:
-            json.dump(pp.settings)
+            json.dump(pp.settings_dict(), f, indent=1)
 
         print(f'Done! At {datetime.now().strftime("%H:%M")}')
 
@@ -110,7 +110,7 @@ def main(config_path, data_path):
 
 if __name__ == "__main__":
     data_prefix = Path.home() / "Box/Neuropixels_Sharing/CATGT/"
-    data_path = data_prefix / "20260218_ABATE125" / "LC_g6_t6"
+    data_path = data_prefix #/ "20260218_ABATE125" / "LC_g6_t6"
     if len(sys.argv) < 2:
         config_path = Path(__file__).parent.parent / 'config' / 'settings.json'
     else:
