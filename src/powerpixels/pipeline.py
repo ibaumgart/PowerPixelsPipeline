@@ -909,12 +909,12 @@ class Pipeline:
                            sync_collection='raw_ephys_data',
                            device_collection='raw_ephys_data')
         task.run()
+
+
+    def spike_synchronization(self):
         
         # Synchronize spike sorting to nidq clock
         sync_spike_sorting(self.ap_file, self.sorter_path)
-        
-
-        return
         
     
     def compress_raw_data(self):

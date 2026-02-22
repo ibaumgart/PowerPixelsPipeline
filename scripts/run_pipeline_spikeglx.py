@@ -54,6 +54,10 @@ def run(config_path, data_path):
             if 'ap' in meta_path_dict:
                 MetaToCoords(meta_path_dict['ap'], outType=1)
 
+        # Synchronize spike sorting to the nidq clock
+        if pp.settings['USE_NIDAQ'] or pp.settings['FORCE_NIDAQ']:
+            pp.probe_synchronization()
+
         print(f'\nLoading {this_probe} recording')
         # Load in raw data
         rec = pp.load_raw_binary()
@@ -80,7 +84,7 @@ def run(config_path, data_path):
 
         # Synchronize spike sorting to the nidq clock
         if pp.settings['USE_NIDAQ'] or pp.settings['FORCE_NIDAQ']:
-            pp.probe_synchronization()
+            pp.spike_synchronization()
 
         # Compress raw data
         pp.compress_raw_data()
