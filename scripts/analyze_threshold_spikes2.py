@@ -66,7 +66,7 @@ def main(rec_path: Path):
 
     # Detect data format
     pp.detect_data_format()
-    
+
     colors = sns.color_palette('Set2', n_colors=6)
 
     # Initialize NIDAQ synchronization
@@ -92,11 +92,11 @@ def main(rec_path: Path):
         print(f'\nLoading {this_probe} recording')
         # Load in raw data
         rec = pp.load_raw_binary()
-        
+
         if not (pp.results_path / 'threshold_peaks.npy').exists():
             # Preprocessing
             rec = pp.preprocessing(rec)
-            
+
             job_kwargs = dict(n_jobs=40, chunk_duration='1s', progress_bar=True)
             peaks = detect_peaks(
                 rec,  method='locally_exclusive',
@@ -114,37 +114,49 @@ def main(rec_path: Path):
         else:
             peaks = np.load(pp.results_path / 'threshold_peaks.npy')
             peak_locations = np.load(pp.results_path / 'threshold_locations.npy')
-            
+
         fs = rec.sampling_frequency
         times = peaks['sample_index'] / fs
-        
+
         fig, ax = plt.subplots(1, 1, sharex=False, sharey=False)
         ax.scatter(peaks['sample_index'] / fs, peak_locations['y'], color='k', marker='.', alpha=0.002)
-        
+
         ch_peaks = {}
         for i, (chan, onoff) in enumerate(pulse_times.items()):
             ch_peaks[chan] = []
-            for on, off in zip(onoff['onset'], onoff['offset']):
-                ax.axvspan(on, off, color=colors[i], alpha=0.3)
-                ch_peaks[chan].append(peaks[np.logical_and(peaks['sample_index']/fs>on, peaks['sample_index']/fs < off)])
-        
-        fig, ax = plt.subplots(1,1)
-        ax.hist(peaks['sample_index']/fs, bins=round(np.max(peaks['sample_index']) / fs // 0.1))
+            for j, (on, off) in enumerate(zip(onoff['onset'], onoff['offset'])):
+                if j == 0:
+                    label = chan
+                else:
+                    label = None
+                ax.axvspan(on, off, color=colors[i], alpha=0.3, label=label)
+                ch_peaks[chan].append(peaks[np.logical_and(peaks['sample_index'] / fs > on, peaks['sample_index'] / fs < off)])
+            if len(ch_peaks[chan]) == 0:
+                del ch_peaks[chan]
+        ax.legend()
+
+        fig, ax = plt.subplots(1, 1)
+        ax.hist(peaks['sample_index']/fs, bins=round(np.max(peaks['sample_index']) / fs // 1.0))
         for i, (chan, onoff) in enumerate(pulse_times.items()):
-            for on, off in zip(onoff['onset'], onoff['offset']):
-                ax.axvspan(on, off, color=colors[i], alpha=0.3)
-        
-        fig, ax = plt.subplots(len(ch_peaks),1)
+            for j, (on, off) in enumerate(zip(onoff['onset'], onoff['offset'])):
+                if j == 0:
+                    label = chan
+                else:
+                    label = None
+                ax.axvspan(on, off, color=colors[i], alpha=0.3, label=label)
+        ax.legend()
+
+        fig, axs = plt.subplots(len(ch_peaks), 1)
         for i, (chan, spike_list) in enumerate(ch_peaks.items()):
             chan_spikes = []
             for spikes, onset in zip(spike_list, pulse_times[chan]['onset']):
                 chan_spikes.append(spikes['sample_index'] / fs - onset)
             chan_spikes = np.hstack(chan_spikes)
-            ax.hist(chan_spikes, bins=np.arange(min(chan_spikes), max(chan_spikes), 0.1))
-            ax.set_title(chan)
+            axs[i].hist(chan_spikes, bins=np.arange(min(chan_spikes), max(chan_spikes), 0.1))
+            axs[i].set_title(chan)
+        plt.tight_layout()
+
         plt.show()
-        
-        
 
 
 if __name__ == "__main__":
@@ -153,6 +165,6 @@ if __name__ == "__main__":
     else:
         main(
             Path(
-                r"C:/Users/ixb240017/Box/Neuropixels_Sharing/CATGT/20260227_LCP02/LC_g0_t1"
+                r"C:\Users\ianba\Box\Neuropixels_Sharing\CATGT\20260227_LCP02\LC_g0_t1"
             )
         )

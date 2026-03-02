@@ -173,15 +173,13 @@ def main(rec_path: Path):
         axs[1, 0].set_ylabel('Pre-Baseline')
         axs[0, 0].set_ylim([-100, 5000])
         fig.savefig(pp.results_path / 'pp_map')
-        
+
         fs = rec.sampling_frequency
         fig, axs = plt.subplots(1, len(pulse_times), sharex=False, sharey=False)
         for j, (chan, locs) in enumerate(baseline_locs.items()):
             axs[j].scatter(baseline_spikes[chan]['sample_index'] / fs, locs['y'], color='k', marker='.', alpha=0.002)
         fig.savefig(pp.results_path / 'pp_drift')
         plt.show()
-        
-        
 
 
 if __name__ == "__main__":
@@ -190,6 +188,6 @@ if __name__ == "__main__":
     else:
         main(
             Path(
-                r"C:/Users/ixb240017/Box/Neuropixels_Sharing/CATGT/20260227_LCP02/LC_g0_t1"
+                r"C:/Users/ianba/Box/Neuropixels_Sharing/CATGT/20260227_LCP02/LC_g0_t1"
             )
         )
