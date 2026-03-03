@@ -168,7 +168,8 @@ class Pipeline:
 
         if self.settings['USE_NIDAQ']:
             if (self.nidq_file.parent / 'nidq.wiring.json').exists():
-                self.nidq_sync = load_json(self.nidq_file.with_suffix('.wiring.json'))
+                self.nidq_sync = load_json(self.nidq_file.parent / 'nidq.wiring.json')
+                # self.nidq_sync = load_json(self.nidq_file.with_suffix('.wiring.json')) # TODO: make this the file name
             if (self.session_path / 'raw_ephys_data' / '_spikeglx_sync.pinout.json').exists():
                 self.sync_map = load_json(self.session_path / 'raw_ephys_data' / '_spikeglx_sync.pinout.json')
 
@@ -222,12 +223,14 @@ class Pipeline:
             # TO DO
             print('TO DO')
             raise NotImplementedError("NIDAQ support for SpikeGLX recordings only")
+        
+        return True
 
     def extract_stim_pulses(self):
         if 'vns_current' not in self.sync_map:
             print("No VNS current AI channel specified in " + str(self.nidq_file))
             print(self.sync_map)
-            return
+            return True
 
         sync_times = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.times.npy'))
         sync_channels = np.load(join(self.session_path, 'raw_ephys_data', '_spikeglx_sync.channels.npy'))
@@ -312,6 +315,8 @@ class Pipeline:
             plt.tight_layout()
             fig.savefig(join(self.alf_path, 'vns_pulse.voltage.png'))
             plt.close(fig)
+        
+        return True
 
 
     def set_probe_paths(self, probe):
@@ -357,7 +362,7 @@ class Pipeline:
 
         # If data is not compressed stop this process
         if (self.ap_file.suffix == '.bin') or (self.ap_file.suffix == '.dat'):
-            return
+            return True
 
         if self.ap_file.suffix == '.cbin':
 
@@ -385,7 +390,7 @@ class Pipeline:
                 shutil.rmtree(self.ap_file)
             self.ap_file = self.ap_file.parent / (self.ap_file.stem + '.dat')
 
-        return
+        return True
 
     def load_raw_binary(self):
 
@@ -684,7 +689,7 @@ class Pipeline:
         # Compute template metrics
         _ = si.compute_template_metrics(sorting_analyzer, include_multi_channel_metrics=True)
                                 
-        return
+        return True
     
     def phy_model_from_ks_path(self):
         # https://github.com/int-brain-lab/ibllib/blob/master/ibllib/ephys/ephysqc.py#L455
@@ -751,7 +756,9 @@ class Pipeline:
                 metadata=metadata,
                 overwrite=True,
                 recording=rec
-                )
+            )
+        
+        return True
 
     
     def automatic_curation(self):
@@ -772,7 +779,7 @@ class Pipeline:
 
         """
         if (self.sorter_path / 'clusters.metrics.csv').exists() and not self.settings['FORCE_CURATION']:
-            return
+            return True
         
         import bombcell as bc
         
@@ -892,7 +899,7 @@ class Pipeline:
         shutil.copy(join(self.sorter_path, 'sorting', 'extensions', 'quality_metrics', 'metrics.csv'),
                     join(self.sorter_path, 'clusters.metrics.csv'))
         
-        return
+        return True
     
         
     def probe_synchronization(self):
@@ -915,6 +922,7 @@ class Pipeline:
         
         # Synchronize spike sorting to nidq clock
         sync_spike_sorting(self.ap_file, self.sorter_path)
+        return True
         
     
     def compress_raw_data(self):
@@ -931,7 +939,7 @@ class Pipeline:
             
             if self.ap_file.suffix == '.zarr':
                 # Recording is already compressed by a previous run
-                return
+                return True
             
             # Compress raw data to zarr folder
             rec.save(folder=self.ap_file.parent.parent / 'continuous.zarr', format='zarr')
@@ -950,7 +958,7 @@ class Pipeline:
         
             if self.ap_file.suffix == '.cbin':
                 # Recording is already compressed by a previous run
-                return
+                return True
             
             # Compress
             mtscomp.compress(self.ap_file, str(self.ap_file)[:-3] + 'cbin',
@@ -966,5 +974,5 @@ class Pipeline:
             # Update reference to ap file
             self.ap_file = self.ap_file.parent / (str(self.ap_file.stem) + '.cbin')
 
-        return
+        return True
         
