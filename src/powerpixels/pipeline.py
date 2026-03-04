@@ -15,7 +15,7 @@ from pathlib import Path, WindowsPath, PosixPath
 import shutil
 from glob import glob
 import json
-from scipy.signal import welch, find_peaks
+from scipy.signal import welch, find_peaks, sosfiltfilt, butter
 import spikeinterface.full as si
 from spikeinterface.core.template_tools import get_template_extremum_channel
 import mtscomp
@@ -299,23 +299,31 @@ class Pipeline:
         np.save(join(self.alf_path, 'vns_voltage.amps.npy'), vns_voltage_amps)
 
         if len(vns_current):
-            fig, axs = plt.subplots(5, (len(train_onoff) // 5) + 1)
+            fig, axs = plt.subplots(5, (len(train_onoff) // 5) + 1, sharex=True, sharey=True, figsize=(12,12))
             for tr_i, ax in enumerate(axs.flat):
+                if np.sum(vns_train==tr_i) == 0:
+                    continue
                 ax.plot(np.arange(blank_start, blank_stop) / sr.fs, vns_current[vns_train==tr_i].T)
+                amp = np.mean(np.max(vns_current[vns_train==tr_i], axis=1))
+                ax.set_title(f"{amp:0.2f} mA")
             fig.suptitle("VNS Current Waveforms")
             plt.tight_layout()
             fig.savefig(join(self.alf_path, 'vns_pulse.current.png'))
-            plt.close(fig)
 
         if len(vns_voltage):
-            fig, axs = plt.subplots(5, (len(train_onoff) // 5) + 1)
+            fig, axs = plt.subplots(5, (len(train_onoff) // 5) + 1, sharex=True, sharey=True, figsize=(12,12))
             for tr_i, ax in enumerate(axs.flat):
+                if np.sum(vns_train==tr_i) == 0:
+                    continue
                 ax.plot(np.arange(blank_start, blank_stop) / sr.fs, vns_voltage[vns_train==tr_i].T)
+                amp = np.mean(np.max(vns_voltage[vns_train==tr_i], axis=1))
+                ax.set_title(f"{amp:0.2f} V")
             fig.suptitle("VNS Voltage Waveforms")
             plt.tight_layout()
             fig.savefig(join(self.alf_path, 'vns_pulse.voltage.png'))
-            plt.close(fig)
         
+        # plt.show()
+        plt.close('all')
         return True
 
 
@@ -418,6 +426,76 @@ class Pipeline:
             rec = si.read_openephys(self.session_path, stream_name=rec_stream)
 
         return rec
+    
+    def remove_artifacts(self, rec):
+        ch_ex = rec.channel_ids[:1]
+        rec_rm = rec
+        if 'VNS_BLANK' in self.settings:
+            print('Removing stimulation artifact.. ')
+            stim_times = np.load(self.alf_path / 'vns_pulse.times.npy')
+            stim_times_list = []
+            for segi in range(rec_rm.get_num_segments()):
+                start = rec_rm.get_start_time(segment_index=segi)
+                end = rec_rm.get_end_time(segment_index=segi)
+                stim_times_list.append(
+                    (stim_times[np.logical_and(stim_times >= start, stim_times <= end)] * rec_rm.sampling_frequency).astype(int)
+                )
+            rec_rm = si.remove_artifacts(
+                rec_rm,
+                stim_times_list,
+                ms_before=abs(self.settings['VNS_BLANK'][0]),
+                ms_after=abs(self.settings['VNS_BLANK'][1]),
+                mode='linear'
+            )
+            fig, axs = plt.subplots(1,2)
+            for seg, stim_times in enumerate(stim_times_list):
+                for stim_time in stim_times:
+                    sli = (
+                        stim_time - int(np.abs(self.settings['VNS_BLANK'][0] / 1000 * rec_rm.sampling_frequency))-5,
+                        stim_time + int(np.abs(self.settings['VNS_BLANK'][1] / 1000 * rec_rm.sampling_frequency))+5
+                    )
+                    tr = rec.get_traces(segment_index=seg, start_frame=sli[0], end_frame=sli[-1], channel_ids=ch_ex)
+                    axs.flat[0].plot(np.arange(sli[0]-stim_time, sli[1]-stim_time) / rec_rm.sampling_frequency, tr)
+                    tr = rec_rm.get_traces(segment_index=seg, start_frame=sli[0], end_frame=sli[-1], channel_ids=ch_ex)
+                    axs.flat[1].plot(np.arange(sli[0]-stim_time, sli[1]-stim_time) / rec_rm.sampling_frequency, tr)
+            fig.savefig(self.results_path / 'vns_removed')
+        if 'TAP_BLANK' in self.settings:
+            stim_times = []
+            for ch_name in ['tail_tap', 'jaw_tap', 'paw_tap']:
+                print(f'Removing {ch_name} artifact.. ')
+                for edge in ['onset', 'offset']:
+                    tap_file = f'{ch_name}_{edge}.times.npy'
+                    stim_times.append(np.load(self.alf_path / tap_file))
+            stim_times = np.hstack(stim_times)
+
+            stim_times_list = []
+            for segi in range(rec_rm.get_num_segments()):
+                start = rec_rm.get_start_time(segment_index=segi)
+                end = rec_rm.get_end_time(segment_index=segi)
+                stim_times_list.append(
+                    (stim_times[np.logical_and(stim_times >= start, stim_times <= end)] * rec_rm.sampling_frequency).astype(int)
+                )
+            rec_rm = si.remove_artifacts(
+                rec_rm,
+                stim_times_list,
+                ms_before=abs(self.settings['TAP_BLANK'][0]),
+                ms_after=abs(self.settings['TAP_BLANK'][1]),
+                mode='linear'
+            )
+            fig, axs = plt.subplots(1,2)
+            for seg, stim_times in enumerate(stim_times_list):
+                for stim_time in stim_times:
+                    sli = (
+                        stim_time - int(np.abs(self.settings['TAP_BLANK'][0] / 1000 * rec_rm.sampling_frequency)) - 5,
+                        stim_time + int(np.abs(self.settings['TAP_BLANK'][1] / 1000 * rec_rm.sampling_frequency)) + 5
+                    )
+                    tr = rec.get_traces(segment_index=seg, start_frame=sli[0], end_frame=sli[-1], channel_ids=ch_ex)
+                    axs.flat[0].plot(np.arange(sli[0]-stim_time, sli[1]-stim_time) / rec_rm.sampling_frequency, tr)
+                    tr = rec_rm.get_traces(segment_index=seg, start_frame=sli[0], end_frame=sli[-1], channel_ids=ch_ex)
+                    axs.flat[1].plot(np.arange(sli[0]-stim_time, sli[1]-stim_time) / rec_rm.sampling_frequency, tr)
+            fig.savefig(self.results_path / 'tap_removed')
+        plt.close('all')
+        return rec_rm
 
     def preprocessing(self, rec: si.BaseRecording):
         """
@@ -450,47 +528,8 @@ class Pipeline:
         # Remove stimulation artifacts
         rec_rm = rec_shifted
         if self.settings['USE_NIDAQ']:
-            if 'VNS_BLANK' in self.settings:
-                print('Removing stimulation artifact.. ')
-                stim_times = np.load(self.alf_path / 'vns_pulse.times.npy')
-                stim_times_list = []
-                for segi in range(rec_rm.get_num_segments()):
-                    start = rec_rm.get_start_time(segment_index=segi)
-                    end = rec_rm.get_end_time(segment_index=segi)
-                    stim_times_list.append(
-                        (stim_times[np.logical_and(stim_times >= start, stim_times <= end)] * rec_rm.sampling_frequency).astype(int)
-                    )
-                rec_rm = si.remove_artifacts(
-                    rec_rm,
-                    stim_times_list,
-                    ms_before=abs(self.settings['VNS_BLANK'][0]),
-                    ms_after=abs(self.settings['VNS_BLANK'][1]),
-                    mode='linear'
-                )
-            if 'TAP_BLANK' in self.settings:
-                stim_times = []
-                for ch_name in ['tail_tap', 'jaw_tap', 'paw_tap']:
-                    print(f'Removing {ch_name} artifact.. ')
-                    for edge in ['onset', 'offset']:
-                        tap_file = f'{ch_name}_{edge}.times.npy'
-                        stim_times.append(np.load(self.alf_path / tap_file))
-                stim_times = np.hstack(stim_times)
-
-                stim_times_list = []
-                for segi in range(rec_rm.get_num_segments()):
-                    start = rec_rm.get_start_time(segment_index=segi)
-                    end = rec_rm.get_end_time(segment_index=segi)
-                    stim_times_list.append(
-                        (stim_times[np.logical_and(stim_times >= start, stim_times <= end)] * rec_rm.sampling_frequency).astype(int)
-                    )
-                rec_rm = si.remove_artifacts(
-                    rec_rm,
-                    stim_times_list,
-                    ms_before=abs(self.settings['TAP_BLANK'][0]),
-                    ms_after=abs(self.settings['TAP_BLANK'][1]),
-                    mode='linear'
-                )
-                
+            rec_rm = self.remove_artifacts(rec_shifted)
+        
         # Do common average referencing before detecting bad channels
         rec_comref = si.common_reference(rec_rm)
         
@@ -568,7 +607,7 @@ class Pipeline:
             ax.scatter(f[peak_ind], mean_power[peak_ind], marker='x', color='r', zorder=1)
         ax.set(ylabel='Power spectral density', xlabel='Frequency (Hz)')
         plt.tight_layout()
-        plt.savefig(self.session_path / 'raw_ephys_data'
+        plt.savefig(self.results_path
                     / f'{self.this_probe} power spectral density.jpg', dpi=600)
         
         # Apply notch filter 
@@ -592,10 +631,11 @@ class Pipeline:
             ax.plot(f, mean_power)
             ax.set(ylabel='Power spectral density', xlabel='Frequency (Hz)')
             plt.tight_layout()
-            plt.savefig(self.session_path / 'raw_ephys_data'
+            plt.savefig(self.results_path
                         / f'{self.this_probe} power spectral density filtered.jpg', dpi=600)
             
             rec_final = rec_notch
+            plt.close('all')
         else:
             rec_final = rec_processed
         

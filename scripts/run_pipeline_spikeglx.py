@@ -144,7 +144,7 @@ def main(config_path, data_path):
 
 if __name__ == "__main__":
     data_prefix = Path.home() / "Box/Neuropixels_Sharing/CATGT/"
-    data_path = data_prefix / "20260227_LCP02" / "LC_g2_t1"
+    data_path = data_prefix / "20260227_LCP02" / "LC_g0_t3"
     if len(sys.argv) < 2:
         config_path = Path(__file__).parent.parent / 'config' / 'settings.json'
     else:
