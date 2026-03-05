@@ -6,10 +6,12 @@ Created on Fri Jul  4 11:42:07 2025
 By Guido Meijer
 """
 
+import os
 import numpy as np
 import json
 from pathlib import Path
 from scipy.signal import medfilt
+import seaborn as sns
 from spikeinterface import load_sorting_analyzer
 from spikeinterface.widgets import plot_sorting_summary
 
@@ -224,14 +226,47 @@ def load_neural_data(sorter_path, histology_path=None, keep_units='all'):
     else:
         raise Exception('keep_units shoud be all, bombcell, unitrefine, ibl or manual')
 
-    spikes['times'] = spikes['times'][np.isin(spikes['clusters'], good_units)]
-    spikes['amps'] = spikes['amps'][np.isin(spikes['clusters'], good_units)]
-    spikes['depths'] = spikes['depths'][np.isin(spikes['clusters'], good_units)]
-    spikes['clusters'] = spikes['clusters'][np.isin(spikes['clusters'], good_units)]
-    clusters['depths'] = clusters['depths'][good_units]
-    clusters['amps'] = clusters['amps'][good_units]
-    clusters['cluster_id'] = clusters['cluster_id'][good_units]
-    if histology_path:
-        clusters['acronym'] = clusters['acronym'][good_units]
+    sp_idx = np.isin(spikes['clusters'], good_units)
+    for k in list(spikes.keys()):
+        spikes[k] = spikes[k][sp_idx]
+    for k in list(clusters.keys()):
+        clusters[k] = clusters[k][good_units]
 
     return spikes, clusters, channels
+
+
+def filter_onoff(onsets, offsets):
+    if len(offsets) > 0:
+        onsets = onsets[onsets < offsets[-1]]
+    else:
+        onsets = np.array([])
+    if len(onsets) > 0:
+        offsets = offsets[offsets > onsets[0]]
+    else:
+        offsets = np.array([])
+    return onsets, offsets
+
+
+def load_trig_times(alf_path):
+    di_onset_files = [str(p.name) for p in Path(alf_path).glob('*_onset.times.npy')]
+    di = {}
+    for onset_file in di_onset_files:
+        event = onset_file.replace('_onset.times.npy', '')
+        if event in ['vns_current', 'vns_voltage']:
+            continue
+        offset_file = onset_file.replace('onset', 'offset')
+        on = np.load(alf_path / onset_file)
+        off = np.load(alf_path / offset_file)
+        di[event] = dict(zip(('onsets', 'offsets'), filter_onoff(on, off)))
+    
+    on = np.load(alf_path / 'vns_train_onset.times.npy')
+    off = np.load(alf_path / 'vns_train_offset.times.npy')
+    trains = dict(zip(['onsets', 'offsets'], filter_onoff(on, off)))
+    
+    pulses = {
+        'times': np.load(alf_path / 'vns_pulse.times.npy'),
+        'train': np.load(alf_path / 'vns_pulse.train.npy'),
+        'i_amps': np.load(alf_path / 'vns_current.amps.npy'),
+        'v_amps': np.load(alf_path / 'vns_voltage.amps.npy'),
+    }
+    return di, trains, pulses

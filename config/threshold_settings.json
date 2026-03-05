@@ -19,11 +19,11 @@
     "FORCE_QC": false,
     "FORCE_CURATION": false,
     "VNS_BLANK": [
-        -0.1,
+        -0.5,
         2.0
     ],
     "TAP_BLANK": [
-        -0.1,
+        -0.5,
         5.0
     ]
 }
