@@ -103,7 +103,7 @@ def manual_curation(results_path):
         np.save(results_path / 'clusters.manualLabels.npy', manual_labels)
 
 
-def load_neural_data(sorter_path, histology_path=None, keep_units='all'):
+def load_neural_data(sorter_path, histology_path=None, keep_units='all', waves=False):
     """
     Helper function to read in the spike sorting output from the Power Pixels pipeline.
 

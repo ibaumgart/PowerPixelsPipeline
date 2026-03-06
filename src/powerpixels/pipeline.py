@@ -199,7 +199,7 @@ class Pipeline:
                                     sync_ext='bin', sync_namespace='spikeglx',
                                     sync_collection='raw_ephys_data',
                                     device_collection='raw_ephys_data')
-                task.run()
+                task.run(overwrite=self.settings['FORCE_NIDAQ'])
 
                 # Extract digital sync timestamps
                 self.sync_map = spikeglx.get_sync_map(self.nidq_file.with_suffix('.wiring.json'))
@@ -248,6 +248,7 @@ class Pipeline:
         # Make on and off same length, convert to samples
         sr = spikeglx.Reader(self.nidq_file)
         train_onoff = (np.array(list(zip(train_onsets - 0.05, train_offsets + 0.05))) * sr.fs).astype(int)
+        true_train_onoff = np.copy(train_onoff).reshape((-1,2))
 
         # Get the VNS blanking period from ms to samples
         blank_start, blank_stop = [int(t * sr.fs / 1000) for t in self.settings['VNS_BLANK']]
@@ -265,6 +266,12 @@ class Pipeline:
             pulse_onset = np.where(np.diff(current_thresh) == 1)[0]
             vns_times.append((pulse_onset + tr_on) / sr.fs)
             vns_train.append(np.full_like(pulse_onset, fill_value=tr_i))
+            
+            if len(pulse_onset):
+                true_train_onoff[tr_i,:] = [
+                    np.min(pulse_onset) + blank_start + tr_on,
+                    np.max(pulse_onset) + blank_stop + tr_on
+                ]
 
             for p_i, p_on in enumerate(pulse_onset):
                 vns_tmp = np.zeros((blank_stop - blank_start,))
@@ -290,7 +297,10 @@ class Pipeline:
         else:
             vns_voltage_amps = []
 
-
+        true_train_onoff = true_train_onoff / sr.fs
+        
+        np.save(join(self.alf_path, 'vns_train_onset.times.npy'), true_train_onoff[:,0])
+        np.save(join(self.alf_path, 'vns_train_offset.times.npy'), true_train_onoff[:,1])
         np.save(join(self.alf_path, 'vns_pulse.times.npy'), vns_times)
         np.save(join(self.alf_path, 'vns_pulse.train.npy'), vns_train)
         np.save(join(self.alf_path, 'vns_current.waveforms.npy'), vns_current)
@@ -955,7 +965,8 @@ class Pipeline:
         task = EphysPulses(session_path=self.session_path, pname=self.this_probe,
                            sync_collection='raw_ephys_data',
                            device_collection='raw_ephys_data')
-        task.run()
+        task.run(overwrite=self.settings['FORCE_NIDAQ'])
+        return True
 
 
     def spike_synchronization(self):
