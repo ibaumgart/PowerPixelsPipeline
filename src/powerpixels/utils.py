@@ -147,6 +147,11 @@ def load_neural_data(sorter_path, histology_path=None, keep_units='all', waves=F
     clusters['depths'] = np.load(sorter_path / 'clusters.depths.npy')
     clusters['amps'] = np.load(sorter_path / 'clusters.amps.npy')
     clusters['cluster_id'] = np.arange(clusters['channels'].shape[0])
+    
+    if waves:
+        waveforms = dict()
+        waveforms['waveforms'] = np.load(sorter_path / 'clusters.waveforms.npy')
+        waveforms['channels'] = np.load(sorter_path / 'clusters.waveformsChannels.npy')
 
     # Add cluster qc metrics
     if (sorter_path / 'clusters.bombcellLabels.npy').is_file():
@@ -231,6 +236,10 @@ def load_neural_data(sorter_path, histology_path=None, keep_units='all', waves=F
         spikes[k] = spikes[k][sp_idx]
     for k in list(clusters.keys()):
         clusters[k] = clusters[k][good_units]
+    if waves:
+        for k in list(waveforms.keys()):
+            waveforms[k] = waveforms[k][good_units]
+        return spikes, clusters, channels, waveforms
 
     return spikes, clusters, channels
 
